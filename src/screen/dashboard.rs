@@ -59,16 +59,21 @@ pub struct Dashboard {
     pub popout: HashMap<window::Id, (pane_grid::State<pane::State>, WindowSpec)>,
     pub streams: UniqueStreams,
     layout_id: uuid::Uuid,
+    /// Ordered list of pane IDs for stable indexing (0-8 for 9-pane grid)
+    pub pane_order: Vec<pane_grid::Pane>,
 }
 
 impl Default for Dashboard {
     fn default() -> Self {
+        let panes = pane_grid::State::with_configuration(Self::default_pane_config());
+        let pane_order: Vec<_> = panes.iter().map(|(id, _)| *id).collect();
         Self {
-            panes: pane_grid::State::with_configuration(Self::default_pane_config()),
+            panes,
             focus: None,
             streams: UniqueStreams::default(),
             popout: HashMap::new(),
             layout_id: uuid::Uuid::new_v4(),
+            pane_order,
         }
     }
 }
@@ -89,28 +94,40 @@ pub enum Event {
 }
 
 impl Dashboard {
+    /// Creates a 3x3 grid of 9 panes for multi-ticker display
     fn default_pane_config() -> Configuration<pane::State> {
-        Configuration::Split {
+        // Create 3 rows, each with 3 columns
+        let row = |_| Configuration::Split {
             axis: pane_grid::Axis::Vertical,
-            ratio: 0.8,
-            a: Box::new(Configuration::Split {
-                axis: pane_grid::Axis::Horizontal,
-                ratio: 0.4,
-                a: Box::new(Configuration::Split {
-                    axis: pane_grid::Axis::Vertical,
-                    ratio: 0.5,
-                    a: Box::new(Configuration::Pane(pane::State::default())),
-                    b: Box::new(Configuration::Pane(pane::State::default())),
-                }),
-                b: Box::new(Configuration::Split {
-                    axis: pane_grid::Axis::Vertical,
-                    ratio: 0.5,
-                    a: Box::new(Configuration::Pane(pane::State::default())),
-                    b: Box::new(Configuration::Pane(pane::State::default())),
-                }),
+            ratio: 0.333,
+            a: Box::new(Configuration::Pane(pane::State::default())),
+            b: Box::new(Configuration::Split {
+                axis: pane_grid::Axis::Vertical,
+                ratio: 0.5,
+                a: Box::new(Configuration::Pane(pane::State::default())),
+                b: Box::new(Configuration::Pane(pane::State::default())),
             }),
-            b: Box::new(Configuration::Pane(pane::State::default())),
+        };
+
+        Configuration::Split {
+            axis: pane_grid::Axis::Horizontal,
+            ratio: 0.333,
+            a: Box::new(row(0)),
+            b: Box::new(Configuration::Split {
+                axis: pane_grid::Axis::Horizontal,
+                ratio: 0.5,
+                a: Box::new(row(1)),
+                b: Box::new(row(2)),
+            }),
         }
+    }
+
+    /// Reset dashboard to 9-pane grid layout
+    pub fn reset_to_grid(&mut self) {
+        self.panes = pane_grid::State::with_configuration(Self::default_pane_config());
+        self.pane_order = self.panes.iter().map(|(id, _)| *id).collect();
+        self.focus = None;
+        self.streams = UniqueStreams::default();
     }
 
     pub fn from_config(
@@ -129,12 +146,14 @@ impl Dashboard {
             );
         }
 
+        let pane_order: Vec<_> = panes.iter().map(|(id, _)| *id).collect();
         Self {
             panes,
             focus: None,
             streams: UniqueStreams::default(),
             popout,
             layout_id,
+            pane_order,
         }
     }
 
@@ -728,6 +747,61 @@ impl Dashboard {
         Task::done(Message::Notification(Toast::warn(
             "No focused pane found".to_string(),
         )))
+    }
+
+    pub fn clear_focused_pane(&mut self, main_window: window::Id) -> Task<Message> {
+        if let Some((window, selected_pane)) = self.focus
+            && let Some(state) = self.get_mut_pane(main_window, window, selected_pane)
+        {
+            // Reset pane to starter content (no ticker)
+            state.content = pane::Content::Starter;
+            state.streams = exchange::adapter::ResolvedStream::Ready(vec![]);
+            state.link_group = None;
+        }
+        Task::none()
+    }
+
+    /// Assign a ticker to a specific pane by index (0-8)
+    pub fn assign_ticker_to_pane(
+        &mut self,
+        _main_window: window::Id,
+        ticker_info: TickerInfo,
+        pane_index: usize,
+    ) -> Task<Message> {
+        // Use stable pane_order for indexing
+        if let Some(&pane_id) = self.pane_order.get(pane_index) {
+            if let Some(state) = self.panes.get_mut(pane_id) {
+                let content_kind = ContentKind::FootprintChart;
+                let streams = state.set_content_and_streams(vec![ticker_info], content_kind);
+                
+                let pane_uid = state.unique_id();
+                self.streams.extend(streams.iter());
+                
+                for stream in &streams {
+                    if let StreamKind::Kline { .. } = stream {
+                        return kline_fetch_task(self.layout_id, pane_uid, *stream, None, None);
+                    }
+                }
+            }
+        } else {
+            log::warn!("Pane index {} out of range (have {} panes)", pane_index, self.pane_order.len());
+        }
+        Task::none()
+    }
+
+    /// Clear a specific pane by index (0-8)
+    pub fn clear_pane_at_index(&mut self, _main_window: window::Id, pane_index: usize) -> Task<Message> {
+        // Use stable pane_order for indexing
+        if let Some(&pane_id) = self.pane_order.get(pane_index) {
+            if let Some(state) = self.panes.get_mut(pane_id) {
+                state.content = pane::Content::Starter;
+                state.streams = exchange::adapter::ResolvedStream::Ready(vec![]);
+                state.link_group = None;
+            }
+        } else {
+            log::warn!("Pane index {} out of range for clearing", pane_index);
+        }
+        Task::none()
     }
 
     pub fn switch_tickers_in_group(

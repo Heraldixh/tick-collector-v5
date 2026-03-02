@@ -5,13 +5,13 @@ use crate::{
     style::{self, Icon, icon_text},
     widget::button_with_tooltip,
 };
-use data::{sidebar, layout::pane::ContentKind};
+use data::sidebar;
 use exchange::adapter::MarketKind;
 
 use iced::{
     Alignment, Element, Length, Subscription, Task,
     alignment,
-    widget::{button, column, container, row, scrollable, space, text, toggler},
+    widget::{column, container, row, scrollable, space, text, toggler},
 };
 use rustc_hash::FxHashMap;
 
@@ -49,6 +49,11 @@ pub enum Action {
         exchange::TickerInfo,
         Option<data::layout::pane::ContentKind>,
     ),
+    /// Ticker assigned to a specific pane index (0-8)
+    TickerAssignedToPane(exchange::TickerInfo, usize),
+    /// Ticker removed from a specific pane index (0-8)
+    TickerRemovedFromPane(usize),
+    TickerDeselected,
     ErrorOccurred(data::InternalError),
 }
 
@@ -95,6 +100,18 @@ impl Sidebar {
                             Task::none(),
                             Some(Action::TickerSelected(ticker_info, content)),
                         );
+                    }
+                    Some(tickers_table::Action::TickerAssignedToPane(ticker_info, pane_index)) => {
+                        return (
+                            Task::none(),
+                            Some(Action::TickerAssignedToPane(ticker_info, pane_index)),
+                        );
+                    }
+                    Some(tickers_table::Action::TickerRemovedFromPane(pane_index)) => {
+                        return (Task::none(), Some(Action::TickerRemovedFromPane(pane_index)));
+                    }
+                    Some(tickers_table::Action::TickerDeselected) => {
+                        return (Task::none(), Some(Action::TickerDeselected));
                     }
                     Some(tickers_table::Action::Fetch(task)) => {
                         return (task.map(Message::TickersTable), None);
@@ -194,16 +211,17 @@ impl Sidebar {
                 .width(Length::Fixed(3.0))
                 .style(move |theme| style::ticker_card_bar(theme, 1.0));
 
-            // Toggle switch (default OFF)
+            // Toggle switch (max 9 can be ON at a time)
             let ticker_copy = *ticker;
-            let is_enabled = self.tickers_table.enabled_tickers.contains(ticker);
+            let is_enabled = self.tickers_table.pane_tickers.iter().any(|t| *t == Some(*ticker));
             let toggle_el = toggler(is_enabled)
                 .on_toggle(move |enabled| Message::TickersTable(
                     tickers_table::Message::ToggleTickerEnabled(ticker_copy, enabled)
                 ))
                 .size(14.0);
 
-            let btn = button(
+            // Ticker row (no click action - use toggle to select)
+            let ticker_row = container(
                 row![
                     color_bar,
                     row![exchange_icon, text(display_label).size(12)]
@@ -216,13 +234,10 @@ impl Sidebar {
             )
             .width(Length::Fill)
             .height(Length::Fixed(TICKER_ROW_HEIGHT))
-            .style(style::button::ticker_card)
-            .on_press(Message::TickersTable(
-                tickers_table::Message::TickerSelected(*ticker, Some(ContentKind::FootprintChart))
-            ));
+            .style(style::ticker_card);
 
             let card = container(
-                row![btn, container(toggle_el).padding([0, 12]).align_y(alignment::Vertical::Center)]
+                row![ticker_row, container(toggle_el).padding([0, 12]).align_y(alignment::Vertical::Center)]
                     .align_y(alignment::Vertical::Center)
             )
                 .style(style::ticker_card)

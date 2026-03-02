@@ -468,6 +468,34 @@ impl Flowsurface {
                             event: msg,
                         });
                     }
+                    Some(dashboard::sidebar::Action::TickerAssignedToPane(ticker_info, pane_index)) => {
+                        let main_window_id = self.main_window.id;
+                        let task = self.active_dashboard_mut().assign_ticker_to_pane(
+                            main_window_id,
+                            ticker_info,
+                            pane_index,
+                        );
+                        return task.map(move |msg| Message::Dashboard {
+                            layout_id: None,
+                            event: msg,
+                        });
+                    }
+                    Some(dashboard::sidebar::Action::TickerRemovedFromPane(pane_index)) => {
+                        let main_window_id = self.main_window.id;
+                        let task = self.active_dashboard_mut().clear_pane_at_index(main_window_id, pane_index);
+                        return task.map(move |msg| Message::Dashboard {
+                            layout_id: None,
+                            event: msg,
+                        });
+                    }
+                    Some(dashboard::sidebar::Action::TickerDeselected) => {
+                        let main_window_id = self.main_window.id;
+                        let task = self.active_dashboard_mut().clear_focused_pane(main_window_id);
+                        return task.map(move |msg| Message::Dashboard {
+                            layout_id: None,
+                            event: msg,
+                        });
+                    }
                     Some(dashboard::sidebar::Action::ErrorOccurred(err)) => {
                         self.notifications.push(Toast::error(err.to_string()));
                     }

@@ -184,11 +184,14 @@ pub fn load_saved_state() -> SavedState {
 
                 let layout_id = Uuid::new_v4();
 
-                let dashboard = Dashboard::from_config(
+                let mut dashboard = Dashboard::from_config(
                     configuration(layout.dashboard.pane.clone()),
                     popout_windows,
                     layout_id,
                 );
+                
+                // Force 9-pane grid layout for multi-ticker display
+                dashboard.reset_to_grid();
 
                 de_layouts.push((layout.name.clone(), layout_id, dashboard));
             }

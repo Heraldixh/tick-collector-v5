@@ -73,6 +73,11 @@ pub fn fetch_tickers_info() -> Task<Message> {
 
 pub enum Action {
     TickerSelected(TickerInfo, Option<ContentKind>),
+    /// Ticker assigned to a specific pane index (0-8)
+    TickerAssignedToPane(TickerInfo, usize),
+    /// Ticker removed from a specific pane index (0-8)
+    TickerRemovedFromPane(usize),
+    TickerDeselected,
     ErrorOccurred(data::InternalError),
     Fetch(Task<Message>),
     FocusWidget(iced::widget::Id),
@@ -115,9 +120,11 @@ pub struct TickersTable {
     show_favorites: bool,
     row_index: FxHashMap<Ticker, usize>,
     pending_stats_batches: usize,
-    /// Tickers with toggle switch enabled (default OFF for all)
-    pub enabled_tickers: FxHashSet<Ticker>,
+    /// Active tickers assigned to panes (index = pane index, None = empty pane)
+    pub pane_tickers: [Option<Ticker>; 9],
 }
+
+const MAX_PANES: usize = 9;
 
 impl TickersTable {
     pub fn new() -> (Self, Task<Message>) {
@@ -142,7 +149,7 @@ impl TickersTable {
                 show_favorites: settings.show_favorites,
                 row_index: FxHashMap::default(),
                 pending_stats_batches: 0,
-                enabled_tickers: FxHashSet::default(),
+                pane_tickers: [None; 9],
             },
             fetch_tickers_info(),
         )
@@ -287,9 +294,33 @@ impl TickersTable {
             }
             Message::ToggleTickerEnabled(ticker, enabled) => {
                 if enabled {
-                    self.enabled_tickers.insert(ticker);
+                    // Check if ticker is already assigned to a pane
+                    if self.pane_tickers.iter().any(|t| *t == Some(ticker)) {
+                        return None;
+                    }
+                    
+                    // Find first empty pane
+                    let empty_pane = self.pane_tickers.iter().position(|t| t.is_none());
+                    
+                    if let Some(pane_index) = empty_pane {
+                        // Assign ticker to this pane
+                        self.pane_tickers[pane_index] = Some(ticker);
+                        
+                        // Trigger chart assignment to specific pane
+                        let ticker_info = self.tickers_info.get(&ticker).cloned().flatten();
+                        if let Some(ticker_info) = ticker_info {
+                            return Some(Action::TickerAssignedToPane(ticker_info, pane_index));
+                        }
+                    } else {
+                        log::warn!("All {} panes are occupied", MAX_PANES);
+                    }
                 } else {
-                    self.enabled_tickers.remove(&ticker);
+                    // Find which pane has this ticker and clear it
+                    if let Some(pane_index) = self.pane_tickers.iter().position(|t| *t == Some(ticker)) {
+                        self.pane_tickers[pane_index] = None;
+                        // Clear that specific pane
+                        return Some(Action::TickerRemovedFromPane(pane_index));
+                    }
                 }
             }
         }
@@ -527,7 +558,7 @@ impl TickersTable {
         display_data: &'a TickerDisplayData,
         is_fav: bool,
     ) -> Element<'a, Message> {
-        let is_enabled = self.enabled_tickers.contains(ticker);
+        let is_enabled = self.pane_tickers.iter().any(|t| *t == Some(*ticker));
         
         if let Some(selected_ticker) = &self.expand_ticker_card {
             let selected_exchange = selected_ticker.exchange;
