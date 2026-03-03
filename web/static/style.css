@@ -1,0 +1,727 @@
+/* Tick Collector Web Dashboard - Dark Theme */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #242424;
+    --bg-tertiary: #2d2d2d;
+    --border-color: #3a3a3a;
+    --text-primary: #e0e0e0;
+    --text-secondary: #888;
+    --accent-color: #4a9eff;
+    --accent-hover: #3a8eef;
+    --success-color: #00c853;
+    --danger-color: #ff5252;
+    --warning-color: #ffc107;
+    --binance-color: #f0b90b;
+    --bybit-color: #f7a600;
+    --okx-color: #ffffff;
+    --hyperliquid-color: #00ff88;
+}
+
+/* Connection Status Indicator (inline with Tickers header) */
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    font-size: 10px;
+    margin-left: 8px;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success-color);
+    animation: pulse 2s infinite;
+}
+
+.connection-status.disconnected .status-dot {
+    background: var(--danger-color);
+    animation: none;
+}
+
+.connection-status.reconnecting .status-dot {
+    background: var(--warning-color);
+    animation: blink 0.5s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app-container {
+    display: flex;
+    height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 200px;
+    min-width: 200px;
+    background-color: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-header h2 {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.ticker-count {
+    background: var(--accent-color);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 500;
+    margin-left: auto;
+}
+
+/* Search Box */
+.search-box {
+    padding: 8px 12px;
+    position: relative;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.search-box input {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+}
+
+.search-box input:focus {
+    border-color: var(--accent-color);
+}
+
+.search-box input::placeholder {
+    color: var(--text-secondary);
+}
+
+/* Search icon removed to match desktop */
+
+/* Sort Select */
+.sort-select {
+    width: 100%;
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    color: var(--text-primary);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+/* Exchange Filter Buttons */
+.exchange-filters {
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.exchange-btn[data-exchange="binance"].active { background: var(--binance-color); color: #000; }
+.exchange-btn[data-exchange="bybit"].active { background: var(--bybit-color); color: #000; }
+.exchange-btn[data-exchange="okx"].active { background: var(--bg-tertiary); border-color: var(--okx-color); }
+.exchange-btn[data-exchange="hyperliquid"].active { background: var(--hyperliquid-color); color: #000; }
+
+/* Hyperliquid button styling */
+.exchange-btn[data-exchange="hyperliquid"] {
+    min-width: auto;
+}
+
+/* Favorites Section (matching desktop) */
+.favorites-section {
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.favorites-section:empty,
+.favorites-section.hidden {
+    display: none;
+}
+
+.favorites-star {
+    color: #ffc107;
+    font-size: 12px;
+}
+
+.favorites-title {
+    color: #ffc107;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.favorites-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.favorites-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.favorites-count {
+    background: var(--warning-color);
+    color: #000;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-size: 9px;
+}
+
+.favorites-list {
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+/* Filters */
+.filters {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.filter-section {
+    margin-bottom: 12px;
+}
+
+.filter-section:last-child {
+    margin-bottom: 0;
+}
+
+.filter-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.filter-label input[type="checkbox"] {
+    accent-color: var(--accent-color);
+}
+
+.filter-title {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.filter-buttons {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.filter-btn {
+    flex: 1;
+    padding: 4px 8px;
+    font-size: 10px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.2s;
+}
+
+.filter-btn:hover {
+    background-color: var(--border-color);
+}
+
+.filter-btn.active {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+    color: white;
+}
+
+/* Ticker List */
+.ticker-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.ticker-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s;
+    gap: 8px;
+    min-height: 32px;
+}
+
+.ticker-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.ticker-item.active {
+    background: rgba(74, 158, 255, 0.1);
+}
+
+.ticker-icon {
+    width: 14px;
+    height: 14px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+/* Exchange icon colors matching desktop app exactly */
+.ticker-icon.binance { color: #f0b90b; }      /* Yellow diamond */
+.ticker-icon.bybit { color: #f7a600; }        /* Orange star */
+.ticker-icon.okx { color: #aaaaaa; }          /* Gray/white square */
+.ticker-icon.hyperliquid { color: #00ff88; }  /* Green diamond */
+
+/* Favorite Star */
+.ticker-favorite {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.3;
+    transition: opacity 0.2s, transform 0.2s;
+    font-size: 12px;
+}
+
+.ticker-favorite:hover {
+    opacity: 0.7;
+    transform: scale(1.2);
+}
+
+.ticker-favorite.active {
+    opacity: 1;
+    color: var(--warning-color);
+}
+
+/* Ticker Price in List */
+.ticker-price {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-left: auto;
+    margin-right: 8px;
+    font-family: monospace;
+}
+
+.ticker-name {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ticker-toggle {
+    width: 36px;
+    height: 18px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 9px;
+    position: relative;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    flex-shrink: 0;
+}
+
+.ticker-toggle.active {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+}
+
+.ticker-toggle::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background-color: #666;
+    border-radius: 50%;
+    top: 1px;
+    left: 1px;
+    transition: transform 0.2s, background-color 0.2s;
+}
+
+.ticker-toggle.active::after {
+    transform: translateX(18px);
+    background-color: white;
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+    padding: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.settings-btn {
+    width: 32px;
+    height: 32px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.2s;
+}
+
+.settings-btn:hover {
+    background-color: var(--border-color);
+}
+
+/* Main Content */
+.main-content {
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Chart Grid - 3x3 */
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    height: 100%;
+    gap: 1px;
+    background-color: var(--border-color);
+}
+
+/* Chart Pane */
+.chart-pane {
+    background-color: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.chart-pane.maximized {
+    position: fixed;
+    top: 0;
+    left: 200px;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+}
+
+.pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    min-height: 28px;
+}
+
+.pane-title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.pane-controls {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.chart-pane:hover .pane-controls {
+    opacity: 1;
+}
+
+.pane-btn {
+    width: 20px;
+    height: 20px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 10px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pane-btn:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.pane-close:hover {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+.pane-content {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+.chart-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: none;
+}
+
+.chart-pane.has-chart .chart-container {
+    display: block;
+}
+
+.chart-pane.has-chart .pane-placeholder {
+    display: none;
+}
+
+.pane-placeholder {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: center;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+/* Pane Info (tick count, zoom level) */
+.pane-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    margin-right: 8px;
+}
+
+.tick-count-btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tick-count-btn:hover {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+}
+
+.tick-size-btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tick-size-btn:hover {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+}
+
+.base-tick-info {
+    margin-top: 12px;
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+/* Tick Count Modal */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    min-width: 220px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.modal-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.modal-body {
+    padding: 16px;
+}
+
+.custom-input-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.custom-input-row label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.custom-input-row input {
+    flex: 1;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    width: 80px;
+}
+
+.custom-input-row input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.tick-presets {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.tick-preset-btn {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tick-preset-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--text-secondary);
+}
+
+.tick-preset-btn.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: white;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .chart-grid {
+        grid-template-columns: repeat(2, 1fr);
+        grid-template-rows: repeat(2, 1fr);
+    }
+    
+    .chart-pane:nth-child(n+5) {
+        display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        width: 160px;
+        min-width: 160px;
+    }
+    
+    .chart-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(2, 1fr);
+    }
+    
+    .chart-pane:nth-child(n+3) {
+        display: none;
+    }
+}

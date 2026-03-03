@@ -15,7 +15,7 @@ repository = "https://github.com/flowsurface-rs/flowsurface"
 homepage = "https://flowsurface.com"
 
 [workspace]
-members = [ "data", "exchange"]
+members = [ "data", "exchange", "web"]
 
 [workspace.dependencies]
 iced_futures = { version = "0.14.0" }

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tick Collector</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>Tickers</h2>
+                <!-- Connection Status Indicator (right of Tickers) -->
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connected</span>
+                </div>
+                <span class="ticker-count" id="tickerCount">0</span>
+            </div>
+            
+            <!-- Search Box -->
+            <div class="search-box">
+                <input type="text" id="tickerSearch" placeholder="Search symbols..." autocomplete="off">
+            </div>
+            
+            <!-- Filters -->
+            <div class="filters" id="filters">
+                <div class="filter-section">
+                    <label class="filter-label">
+                        <input type="checkbox" id="largeVolumeOnly" checked>
+                        <span>Large volume only</span>
+                    </label>
+                </div>
+                <div class="filter-section">
+                    <span class="filter-title">Exchange</span>
+                    <div class="filter-buttons exchange-filters">
+                        <button class="filter-btn exchange-btn active" data-exchange="all">All</button>
+                        <button class="filter-btn exchange-btn" data-exchange="binance">Binance</button>
+                        <button class="filter-btn exchange-btn" data-exchange="bybit">Bybit</button>
+                        <button class="filter-btn exchange-btn" data-exchange="okx">OKX</button>
+                    </div>
+                    <div class="filter-buttons exchange-filters">
+                        <button class="filter-btn exchange-btn" data-exchange="hyperliquid">Hyperliquid</button>
+                    </div>
+                </div>
+                <div class="filter-section">
+                    <span class="filter-title">Market Type</span>
+                    <div class="filter-buttons">
+                        <button class="filter-btn" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="spot">Spot</button>
+                        <button class="filter-btn active" data-filter="perps">All Perps</button>
+                    </div>
+                    <div class="filter-buttons">
+                        <button class="filter-btn" data-filter="linear">Linear</button>
+                        <button class="filter-btn" data-filter="inverse">Inverse</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Favorites Section (matching desktop) -->
+            <div class="favorites-section" id="favoritesSection">
+                <div class="favorites-header">
+                    <span class="favorites-star">★</span>
+                    <span class="favorites-title">Favorites</span>
+                </div>
+                <div class="favorites-list" id="favoritesList"></div>
+            </div>
+            
+            <!-- Ticker List -->
+            <div class="ticker-list" id="tickerList">
+                <!-- Populated by JavaScript -->
+            </div>
+            
+            <!-- Settings Button -->
+            <div class="sidebar-footer">
+                <button class="settings-btn" id="settingsBtn">⚙️</button>
+            </div>
+        </aside>
+        
+        <!-- Main Content - 3x3 Chart Grid -->
+        <main class="main-content">
+            <div class="chart-grid" id="chartGrid">
+                <!-- 9 chart panes -->
+                <div class="chart-pane" data-pane="0">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="0" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="0" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-0"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="1">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="1" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="1" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-1"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="2">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="2" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="2" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-2"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="3">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="3" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="3" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-3"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="4">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="4" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="4" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-4"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="5">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="5" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="5" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-5"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="6">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="6" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="6" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-6"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="7">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="7" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="7" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-7"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+                <div class="chart-pane" data-pane="8">
+                    <div class="pane-header">
+                        <span class="pane-title"></span>
+                        <div class="pane-info">
+                            <button class="tick-count-btn" data-pane="8" title="Tick Count">1000T</button>
+                            <button class="tick-size-btn" data-pane="8" title="Tick Size Multiplier">50x</button>
+                        </div>
+                        <div class="pane-controls">
+                            <button class="pane-btn" title="Settings">⚙️</button>
+                            <button class="pane-btn" title="Maximize">⬜</button>
+                            <button class="pane-btn pane-close" title="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="pane-content">
+                        <div class="chart-container" id="chart-8"></div>
+                        <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Tick Count Modal (matching desktop) -->
+    <div class="modal-overlay" id="tickCountModal">
+        <div class="modal-content tick-count-modal">
+            <div class="modal-header">Tick Count</div>
+            <div class="modal-body">
+                <div class="custom-input-row">
+                    <label>Custom:</label>
+                    <input type="number" id="customTickCount" min="4" max="1000" placeholder="4-1000">
+                </div>
+                <div class="tick-presets">
+                    <button class="tick-preset-btn" data-ticks="10">10T</button>
+                    <button class="tick-preset-btn" data-ticks="20">20T</button>
+                    <button class="tick-preset-btn" data-ticks="50">50T</button>
+                    <button class="tick-preset-btn" data-ticks="100">100T</button>
+                    <button class="tick-preset-btn" data-ticks="200">200T</button>
+                    <button class="tick-preset-btn" data-ticks="500">500T</button>
+                    <button class="tick-preset-btn active" data-ticks="1000">1000T</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tick Size Multiplier Modal (matching desktop) -->
+    <div class="modal-overlay" id="tickSizeModal">
+        <div class="modal-content tick-size-modal">
+            <div class="modal-header">Tick size multiplier</div>
+            <div class="modal-body">
+                <div class="custom-input-row">
+                    <label>Custom:</label>
+                    <input type="number" id="customTickSize" min="1" max="2000" placeholder="1-2000">
+                </div>
+                <div class="tick-presets">
+                    <button class="tick-size-preset-btn" data-multiplier="1">1x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="2">2x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="5">5x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="10">10x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="25">25x</button>
+                    <button class="tick-size-preset-btn active" data-multiplier="50">50x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="100">100x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="200">200x</button>
+                    <button class="tick-size-preset-btn" data-multiplier="500">500x</button>
+                </div>
+                <div class="base-tick-info">Base: <span id="baseTickSize">0.1</span></div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
