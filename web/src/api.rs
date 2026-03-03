@@ -640,6 +640,7 @@ pub async fn get_config(
 /// POST /api/v1/config
 /// Saves admin's chart configuration and persists to disk
 /// This controls which tickers the server collects data for
+/// IMPORTANT: When new tickers are added, this starts 24/7 persistent streams for them
 pub async fn save_config(
     state: web::Data<Arc<RwLock<AppState>>>,
     config: web::Json<ChartConfig>,
@@ -648,8 +649,8 @@ pub async fn save_config(
     
     // Save to memory
     {
-        let mut state = state.write();
-        state.config = config_data.clone();
+        let mut state_guard = state.write();
+        state_guard.config = config_data.clone();
     }
     
     // Persist to disk so server can restore on restart
@@ -660,6 +661,24 @@ pub async fn save_config(
             log::error!("Failed to save config to disk: {}", e);
         } else {
             log::info!("📝 Admin config saved: {:?}", config_data.pane_tickers);
+        }
+    }
+    
+    // Start 24/7 persistent streams for any newly configured tickers
+    // This ensures data collection starts immediately when admin adds a ticker
+    for ticker_opt in &config_data.pane_tickers {
+        if let Some(ticker_key) = ticker_opt {
+            if let Some((exchange, symbol)) = ticker_key.split_once(':') {
+                let state_inner: Arc<RwLock<AppState>> = (**state).clone();
+                let key = ticker_key.clone();
+                let exchange_owned = exchange.to_string();
+                let symbol_owned = symbol.to_string();
+                
+                // Spawn persistent stream (will check if already running internally)
+                tokio::spawn(async move {
+                    crate::exchange::start_single_stream(state_inner, &exchange_owned, &symbol_owned, &key).await;
+                });
+            }
         }
     }
     
