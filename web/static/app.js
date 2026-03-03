@@ -998,10 +998,6 @@ async function assignTickerToPane(tickerKey, paneIndex) {
         renderFootprint();
     }
     
-    // Store function references for external access
-    footprintState.reAggregateAllTrades = reAggregateAllTrades;
-    footprintState.createFootprintBar = createFootprintBar;
-    
     // Render footprint chart (matching desktop exactly)
     function renderFootprint() {
         const width = canvas.width;
@@ -1387,6 +1383,11 @@ async function assignTickerToPane(tickerKey, paneIndex) {
     });
     resizeObserver.observe(container);
     
+    // Store function references for external access (backup data re-rendering)
+    footprintState.renderFootprint = renderFootprint;
+    footprintState.reAggregateAllTrades = reAggregateAllTrades;
+    footprintState.createFootprintBar = createFootprintBar;
+    
     // Initial render
     renderFootprint();
     
@@ -1397,6 +1398,10 @@ async function assignTickerToPane(tickerKey, paneIndex) {
         ws.onopen = () => {
             console.log(`WebSocket connected: ${tickerKey}`);
             updateConnectionStatus('connected');
+            
+            // BACKUP: Fill gap between last saved data and now
+            // This handles the case where app was offline and is now reconnecting
+            fillDataGap(exchange, symbol, footprintState);
         };
         
         ws.onmessage = (event) => {
@@ -1475,10 +1480,17 @@ async function assignTickerToPane(tickerKey, paneIndex) {
         ws.onclose = () => {
             console.log(`WebSocket closed: ${tickerKey}`);
             
+            // Record disconnect time for gap calculation on reconnect
+            footprintState.lastDisconnectTime = Date.now();
+            
             // Auto-reconnect if pane still exists
             const pane = state.panes[paneIndex];
             if (pane && pane.ticker === tickerKey) {
                 updateConnectionStatus('reconnecting');
+                
+                // Note: Backup data will be fetched on reconnect (ws.onopen)
+                // This ensures we fill the gap with the most recent data available
+                
                 pane.reconnectTimer = setTimeout(() => {
                     console.log(`Reconnecting to ${tickerKey}...`);
                     pane.ws = connectWebSocket();
@@ -1638,6 +1650,210 @@ async function restorePanes() {
     } catch (e) {
         console.error('Failed to restore panes:', e);
     }
+}
+
+// ============================================================================
+// BACKUP TRADES - Fetch from REST API when WebSocket disconnects
+// ============================================================================
+
+// Fill data gap when WebSocket connects - fetches trades to fill time gap
+// Called on WebSocket OPEN to fill gap between last saved data and current time
+async function fillDataGap(exchange, symbol, footprintState) {
+    const tickerKey = `${exchange}:${symbol}`;
+    
+    console.log(`🔍 Checking for data gap: ${tickerKey}, existing trades: ${footprintState.allTrades.length}`);
+    
+    // Always try to fetch backup data to fill any gaps
+    // Even if we have no existing data, we can get recent trades
+    const lastTradeTime = footprintState.allTrades.length > 0 
+        ? footprintState.allTrades[footprintState.allTrades.length - 1].timestamp 
+        : 0;
+    
+    const now = Date.now();
+    const gapMs = lastTradeTime > 0 ? (now - lastTradeTime) : 0;
+    const gapMinutes = gapMs / (1000 * 60);
+    
+    // Check if gap is too old (> 7 days) - clear and start fresh
+    const MAX_GAP_DAYS = 7;
+    if (lastTradeTime > 0 && gapMs > MAX_GAP_DAYS * 24 * 60 * 60 * 1000) {
+        console.log(`⚠️ Gap too large for ${tickerKey} (${(gapMs / (1000 * 60 * 60 * 24)).toFixed(1)} days), starting fresh`);
+        footprintState.allTrades = [];
+        footprintState.bars = [];
+        footprintState.tickBuffer = [];
+        return;
+    }
+    
+    // Fetch backup data if we have a gap > 10 seconds (to avoid unnecessary calls)
+    const MIN_GAP_SECONDS = 10;
+    if (lastTradeTime === 0 || gapMs > MIN_GAP_SECONDS * 1000) {
+        console.log(`🔄 Filling gap for ${tickerKey}: ${gapMinutes.toFixed(1)} minutes since last trade`);
+        await fetchBackupTrades(exchange, symbol, footprintState, lastTradeTime);
+    } else {
+        console.log(`✅ No significant gap for ${tickerKey} (${(gapMs/1000).toFixed(1)}s)`);
+    }
+}
+
+// Fetch backup trades from exchange REST API to fill gaps
+// ONLY called for active tickers (those with WebSocket connections)
+async function fetchBackupTrades(exchange, symbol, footprintState, sinceTimestamp = 0) {
+    const tickerKey = `${exchange}:${symbol}`;
+    
+    // Double-check: Only fetch backup for active tickers
+    const isActive = state.panes.some(p => p && p.ticker === tickerKey);
+    if (!isActive) {
+        console.log(`⏭️ Skipping backup fetch for ${tickerKey} - ticker not active`);
+        return;
+    }
+    
+    console.log(`🔄 Fetching backup trades for ${tickerKey} (since ${sinceTimestamp ? new Date(sinceTimestamp).toISOString() : 'beginning'})...`);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/backup-trades/${exchange}/${symbol}?limit=1000`);
+        
+        if (!response.ok) {
+            console.error(`Failed to fetch backup trades: ${response.status}`);
+            return;
+        }
+        
+        const trades = await response.json();
+        
+        if (!trades || trades.length === 0) {
+            console.log(`No backup trades available for ${tickerKey}`);
+            return;
+        }
+        
+        console.log(`📥 Received ${trades.length} backup trades for ${tickerKey}`);
+        console.log(`📊 Backup trades time range: ${new Date(trades[0]?.timestamp).toISOString()} to ${new Date(trades[trades.length-1]?.timestamp).toISOString()}`);
+        
+        // Get existing trade timestamps for deduplication
+        const existingTimestamps = new Set(footprintState.allTrades.map(t => t.timestamp));
+        
+        // Filter to only include trades that don't already exist (deduplication only)
+        // We want ALL trades from the REST API that we don't have, regardless of timestamp
+        const newTrades = trades.filter(t => !existingTimestamps.has(t.timestamp));
+        
+        console.log(`🔍 After deduplication: ${newTrades.length} unique trades to add`);
+        
+        if (newTrades.length === 0) {
+            console.log(`No new trades to add for ${tickerKey} (all duplicates)`);
+            return;
+        }
+        
+        console.log(`➕ Adding ${newTrades.length} new trades to fill gap for ${tickerKey}`);
+        
+        // Merge new trades with existing trades
+        const allTradesCombined = [...footprintState.allTrades, ...newTrades];
+        
+        // Sort by timestamp to ensure correct order
+        allTradesCombined.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // Remove duplicates (same timestamp) after sorting
+        footprintState.allTrades = allTradesCombined.filter((trade, index, arr) => {
+            if (index === 0) return true;
+            return trade.timestamp !== arr[index - 1].timestamp;
+        });
+        
+        console.log(`📊 After merge: ${footprintState.allTrades.length} total trades`);
+        
+        // Trim if too many trades (keep most recent for 7-day retention)
+        if (footprintState.allTrades.length > 100000) {
+            footprintState.allTrades = footprintState.allTrades.slice(-80000);
+        }
+        
+        // Re-aggregate all trades to rebuild bars with the new data
+        reAggregateTradesForBackup(footprintState);
+        
+        // Save the updated data
+        saveFootprintData(tickerKey, footprintState);
+        
+        console.log(`✅ Backup data merged for ${tickerKey}: ${footprintState.bars.length} bars, ${footprintState.allTrades.length} trades`);
+        
+    } catch (e) {
+        console.error(`Failed to fetch backup trades for ${tickerKey}:`, e);
+    }
+}
+
+// Re-aggregate trades after backup data is added
+function reAggregateTradesForBackup(footprintState) {
+    if (footprintState.allTrades.length === 0) return;
+    
+    // Clear existing bars and rebuild
+    footprintState.bars = [];
+    footprintState.currentBar = null;
+    footprintState.tickBuffer = [];
+    
+    const tickCount = footprintState.tickCount;
+    const tickSize = footprintState.tickSize;
+    let buffer = [];
+    
+    footprintState.allTrades.forEach((trade) => {
+        buffer.push(trade);
+        
+        if (buffer.length >= tickCount) {
+            const bar = createFootprintBarFromTrades(buffer, tickSize);
+            if (bar) footprintState.bars.push(bar);
+            buffer = [];
+        }
+    });
+    
+    // Keep remaining trades in buffer for next bar
+    footprintState.tickBuffer = buffer;
+    
+    // Limit bars
+    if (footprintState.bars.length > 200) {
+        footprintState.bars = footprintState.bars.slice(-150);
+    }
+    
+    // Render if we have a render function
+    if (footprintState.renderFootprint) {
+        footprintState.renderFootprint();
+    }
+}
+
+// Create footprint bar from trades array (standalone version for backup)
+function createFootprintBarFromTrades(ticks, tickSize) {
+    if (ticks.length === 0) return null;
+    
+    const open = ticks[0].price;
+    const close = ticks[ticks.length - 1].price;
+    const high = Math.max(...ticks.map(t => t.price));
+    const low = Math.min(...ticks.map(t => t.price));
+    
+    // Group trades by price level
+    const priceLevels = {};
+    const roundToTick = (p) => Math.round(p / tickSize) * tickSize;
+    
+    ticks.forEach(trade => {
+        const level = roundToTick(trade.price);
+        if (!priceLevels[level]) {
+            priceLevels[level] = { bid: 0, ask: 0, delta: 0 };
+        }
+        if (trade.is_buyer_maker) {
+            priceLevels[level].bid += trade.quantity || 1;
+        } else {
+            priceLevels[level].ask += trade.quantity || 1;
+        }
+        priceLevels[level].delta = priceLevels[level].ask - priceLevels[level].bid;
+    });
+    
+    // Find POC
+    let pocPrice = null;
+    let maxVolume = 0;
+    Object.entries(priceLevels).forEach(([price, data]) => {
+        const totalVol = data.bid + data.ask;
+        if (totalVol > maxVolume) {
+            maxVolume = totalVol;
+            pocPrice = parseFloat(price);
+        }
+    });
+    
+    return {
+        time: ticks[ticks.length - 1].timestamp || Date.now(),
+        open, high, low, close,
+        priceLevels,
+        pocPrice,
+        isBullish: close >= open,
+    };
 }
 
 // ============================================================================

@@ -658,6 +658,180 @@ async fn connect_hyperliquid_stream(
     }
 }
 
+// ============================================================================
+// REST API BACKUP - Fetch historical trades when WebSocket is disconnected
+// ============================================================================
+
+/// Fetch recent trades from exchange REST API (backup for WebSocket gaps)
+pub async fn fetch_historical_trades(
+    exchange: &str,
+    symbol: &str,
+    limit: usize,
+) -> Result<Vec<Trade>, Box<dyn std::error::Error + Send + Sync>> {
+    match exchange {
+        "binance" => fetch_binance_trades(symbol, limit).await,
+        "bybit" => fetch_bybit_trades(symbol, limit).await,
+        "okx" => fetch_okx_trades(symbol, limit).await,
+        "hyperliquid" => fetch_hyperliquid_trades(symbol, limit).await,
+        _ => Err(format!("Unknown exchange: {}", exchange).into()),
+    }
+}
+
+async fn fetch_binance_trades(
+    symbol: &str,
+    limit: usize,
+) -> Result<Vec<Trade>, Box<dyn std::error::Error + Send + Sync>> {
+    #[derive(Deserialize)]
+    struct BinanceTrade {
+        #[serde(rename = "T")]
+        time: u64,
+        #[serde(rename = "p")]
+        price: String,
+        #[serde(rename = "q")]
+        qty: String,
+        #[serde(rename = "m")]
+        is_buyer_maker: bool,
+    }
+    
+    let url = format!(
+        "https://fapi.binance.com/fapi/v1/aggTrades?symbol={}&limit={}",
+        symbol, limit.min(1000)
+    );
+    
+    let resp: Vec<BinanceTrade> = reqwest::get(&url).await?.json().await?;
+    
+    let trades: Vec<Trade> = resp.into_iter().map(|t| Trade {
+        timestamp: t.time,
+        price: t.price.parse().unwrap_or(0.0),
+        quantity: t.qty.parse().unwrap_or(0.0),
+        is_buyer_maker: t.is_buyer_maker,
+    }).collect();
+    
+    log::info!("Fetched {} trades from Binance REST API for {}", trades.len(), symbol);
+    Ok(trades)
+}
+
+async fn fetch_bybit_trades(
+    symbol: &str,
+    limit: usize,
+) -> Result<Vec<Trade>, Box<dyn std::error::Error + Send + Sync>> {
+    #[derive(Deserialize)]
+    struct BybitResponse {
+        result: BybitResult,
+    }
+    #[derive(Deserialize)]
+    struct BybitResult {
+        list: Vec<BybitTrade>,
+    }
+    #[derive(Deserialize)]
+    struct BybitTrade {
+        #[serde(rename = "T")]
+        time: u64,
+        #[serde(rename = "p")]
+        price: String,
+        #[serde(rename = "v")]
+        size: String,
+        #[serde(rename = "S")]
+        side: String,
+    }
+    
+    let url = format!(
+        "https://api.bybit.com/v5/market/recent-trade?category=linear&symbol={}&limit={}",
+        symbol, limit.min(1000)
+    );
+    
+    let resp: BybitResponse = reqwest::get(&url).await?.json().await?;
+    
+    let trades: Vec<Trade> = resp.result.list.into_iter().map(|t| Trade {
+        timestamp: t.time,
+        price: t.price.parse().unwrap_or(0.0),
+        quantity: t.size.parse().unwrap_or(0.0),
+        is_buyer_maker: t.side == "Sell",
+    }).collect();
+    
+    log::info!("Fetched {} trades from Bybit REST API for {}", trades.len(), symbol);
+    Ok(trades)
+}
+
+async fn fetch_okx_trades(
+    symbol: &str,
+    limit: usize,
+) -> Result<Vec<Trade>, Box<dyn std::error::Error + Send + Sync>> {
+    #[derive(Deserialize)]
+    struct OkxResponse {
+        data: Vec<OkxTrade>,
+    }
+    #[derive(Deserialize)]
+    struct OkxTrade {
+        ts: String,
+        px: String,
+        sz: String,
+        side: String,
+    }
+    
+    // OKX format: BTCUSDT -> BTC-USDT-SWAP
+    let inst_id = format!("{}-{}-SWAP", 
+        &symbol[..symbol.len()-4], 
+        &symbol[symbol.len()-4..]
+    );
+    
+    let url = format!(
+        "https://www.okx.com/api/v5/market/trades?instId={}&limit={}",
+        inst_id, limit.min(500)
+    );
+    
+    let resp: OkxResponse = reqwest::get(&url).await?.json().await?;
+    
+    let trades: Vec<Trade> = resp.data.into_iter().map(|t| Trade {
+        timestamp: t.ts.parse().unwrap_or(0),
+        price: t.px.parse().unwrap_or(0.0),
+        quantity: t.sz.parse().unwrap_or(0.0),
+        is_buyer_maker: t.side == "sell",
+    }).collect();
+    
+    log::info!("Fetched {} trades from OKX REST API for {}", trades.len(), symbol);
+    Ok(trades)
+}
+
+async fn fetch_hyperliquid_trades(
+    symbol: &str,
+    limit: usize,
+) -> Result<Vec<Trade>, Box<dyn std::error::Error + Send + Sync>> {
+    #[derive(Deserialize)]
+    struct HyperliquidTrade {
+        time: u64,
+        px: String,
+        sz: String,
+        side: String,
+    }
+    
+    let coin = symbol.replace("USDT", "");
+    
+    let client = reqwest::Client::new();
+    let resp: Vec<HyperliquidTrade> = client
+        .post("https://api.hyperliquid.xyz/info")
+        .json(&serde_json::json!({
+            "type": "recentTrades",
+            "coin": coin,
+            "limit": limit.min(1000)
+        }))
+        .send()
+        .await?
+        .json()
+        .await
+        .unwrap_or_default();
+    
+    let trades: Vec<Trade> = resp.into_iter().map(|t| Trade {
+        timestamp: t.time,
+        price: t.px.parse().unwrap_or(0.0),
+        quantity: t.sz.parse().unwrap_or(0.0),
+        is_buyer_maker: t.side == "A",
+    }).collect();
+    
+    log::info!("Fetched {} trades from Hyperliquid REST API for {}", trades.len(), symbol);
+    Ok(trades)
+}
+
 // WebSocket connection helpers
 async fn connect_ws(domain: &str, url: &str) -> Result<FragmentCollector<TokioIo<Upgraded>>, Box<dyn std::error::Error + Send + Sync>> {
     let tcp_stream = setup_tcp(domain).await?;

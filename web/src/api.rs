@@ -383,6 +383,31 @@ pub async fn save_footprint(
     }
 }
 
+/// GET /api/v1/backup-trades/{exchange}/{symbol}
+/// Fetch historical trades from exchange REST API (backup for WebSocket gaps)
+pub async fn get_backup_trades(
+    path: web::Path<(String, String)>,
+    query: web::Query<TradesQuery>,
+) -> Result<HttpResponse> {
+    let (exchange, symbol) = path.into_inner();
+    let limit = query.limit.unwrap_or(500).min(1000);
+    
+    log::info!("Backup trades request: {}:{} (limit={})", exchange, symbol, limit);
+    
+    match crate::exchange::fetch_historical_trades(&exchange.to_lowercase(), &symbol.to_uppercase(), limit).await {
+        Ok(trades) => {
+            log::info!("Returning {} backup trades for {}:{}", trades.len(), exchange, symbol);
+            Ok(HttpResponse::Ok().json(trades))
+        }
+        Err(e) => {
+            log::error!("Failed to fetch backup trades for {}:{}: {}", exchange, symbol, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch trades: {}", e)
+            })))
+        }
+    }
+}
+
 /// Cleanup old footprint data (called periodically)
 pub fn cleanup_old_footprint_data() {
     let retention_days = 7;

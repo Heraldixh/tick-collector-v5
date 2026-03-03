@@ -68,6 +68,8 @@ async fn main() -> std::io::Result<()> {
                     // Footprint data persistence (server-side storage)
                     .route("/footprint/{exchange}/{symbol}", web::get().to(api::get_footprint))
                     .route("/footprint/{exchange}/{symbol}", web::post().to(api::save_footprint))
+                    // Backup trades from exchange REST API (for WebSocket gaps)
+                    .route("/backup-trades/{exchange}/{symbol}", web::get().to(api::get_backup_trades))
             )
             // WebSocket for live data
             .route("/ws/live/{exchange}/{symbol}", web::get().to(websocket::ws_handler))
