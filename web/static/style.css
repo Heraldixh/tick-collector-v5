@@ -980,6 +980,201 @@ body {
     color: var(--text-secondary);
 }
 
+/* API Dashboard Styles */
+.api-dashboard {
+    height: 100%;
+    overflow-y: auto;
+    padding: 20px;
+    background: #0a0a0a;
+}
+
+.api-loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary);
+}
+
+.api-header {
+    background: linear-gradient(135deg, #1a2a4a 0%, #0d1828 100%);
+    border: 1px solid #4a9eff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.api-header-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: #4a9eff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+}
+
+.api-header-info h2 {
+    font-size: 20px;
+    margin-bottom: 4px;
+    color: var(--text-primary);
+}
+
+.api-header-info p {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.api-server-url {
+    margin-left: auto;
+    background: var(--bg-tertiary);
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 14px;
+    color: #4a9eff;
+}
+
+.api-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.api-section-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-tertiary);
+}
+
+.api-section-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.api-endpoint {
+    padding: 16px 20px;
+    border-bottom: 1px solid #1e1e1e;
+}
+
+.api-endpoint:last-child {
+    border-bottom: none;
+}
+
+.api-endpoint-method {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 10px;
+}
+
+.api-endpoint-method.get {
+    background: #26a69a20;
+    color: #26a69a;
+}
+
+.api-endpoint-method.post {
+    background: #ffc10720;
+    color: #ffc107;
+}
+
+.api-endpoint-path {
+    font-family: monospace;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.api-endpoint-desc {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.api-endpoint-params {
+    margin-top: 10px;
+    padding: 10px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.api-endpoint-params code {
+    color: #4a9eff;
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.api-try-btn {
+    background: var(--accent-color);
+    border: none;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.api-try-btn:hover {
+    background: var(--accent-hover);
+}
+
+.api-response {
+    margin-top: 10px;
+    padding: 10px;
+    background: #1a1a1a;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 11px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    color: #26a69a;
+}
+
+.api-config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.api-config-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.api-config-card h3 {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.api-config-value {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: monospace;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
     .chart-grid {

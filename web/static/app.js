@@ -1881,6 +1881,10 @@ function switchTab(tabName) {
         document.getElementById('healthView').classList.add('active');
         loadHealthData();
         startHealthRefresh();
+    } else if (tabName === 'api') {
+        document.getElementById('apiView').classList.add('active');
+        stopHealthRefresh();
+        renderApiDashboard();
     }
 }
 
@@ -2057,4 +2061,219 @@ function renderHealthDashboard(data) {
             </table>
         </div>
     `;
+}
+
+// ============================================================================
+// API CONFIGURATION DASHBOARD
+// ============================================================================
+
+// Render API dashboard with endpoints documentation
+async function renderApiDashboard() {
+    const serverUrl = window.location.origin;
+    
+    // Fetch API key from server
+    let apiKey = 'Loading...';
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/api-key`);
+        const data = await response.json();
+        apiKey = data.api_key;
+    } catch (e) {
+        apiKey = 'Error loading API key';
+    }
+    
+    document.getElementById('apiContent').innerHTML = `
+        <div class="api-header">
+            <div class="api-header-icon">🔌</div>
+            <div class="api-header-info">
+                <h2>Sync API for Desktop Client</h2>
+                <p>REST API endpoints for desktop app data synchronization</p>
+            </div>
+            <div class="api-server-url">${serverUrl}</div>
+        </div>
+        
+        <div class="api-config-grid">
+            <div class="api-config-card">
+                <h3>📡 Server URL</h3>
+                <div class="api-config-value">${serverUrl}</div>
+            </div>
+            <div class="api-config-card" style="grid-column: span 2;">
+                <h3>🔑 API Key</h3>
+                <div class="api-config-value" id="apiKeyDisplay" style="font-size: 14px; word-break: break-all;">${apiKey}</div>
+                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                    <button class="api-try-btn" onclick="copyApiKey('${apiKey}')">📋 Copy</button>
+                    <button class="api-try-btn" onclick="regenerateApiKey()" style="background: #ef5350;">� Regenerate Key</button>
+                </div>
+            </div>
+            <div class="api-config-card">
+                <h3>� Data Retention</h3>
+                <div class="api-config-value">7 Days</div>
+            </div>
+        </div>
+        
+        <div class="api-section">
+            <div class="api-section-header">
+                <h3>�️ Desktop Client Configuration</h3>
+            </div>
+            <div class="api-endpoint">
+                <div class="api-endpoint-desc">
+                    <strong>Server URL:</strong> <code>${serverUrl}</code><br><br>
+                    <strong>API Key:</strong> <code>${apiKey}</code><br><br>
+                    <strong>Instructions:</strong><br>
+                    1. Open your desktop charting app<br>
+                    2. Go to Settings → Server Connection<br>
+                    3. Enable "Enable history fetch"<br>
+                    4. Enter Server URL: <code>${serverUrl}</code><br>
+                    5. Enter API Key: <code>${apiKey}</code><br>
+                    6. Click Save/Connect
+                </div>
+            </div>
+        </div>
+        
+        <div class="api-section">
+            <div class="api-section-header">
+                <h3>📋 Sync Endpoints</h3>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/sync/tickers</span>
+                <div class="api-endpoint-desc">Get list of all available tickers with sync status</div>
+                <button class="api-try-btn" onclick="tryApiEndpoint('/api/v1/sync/tickers', 'sync-tickers-response')">Try It</button>
+                <div class="api-response" id="sync-tickers-response" style="display:none;"></div>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/sync/{exchange}/{symbol}/latest</span>
+                <div class="api-endpoint-desc">Get latest trade timestamp and counts for sync coordination</div>
+                <div class="api-endpoint-params">
+                    <strong>Response:</strong> <code>latest_timestamp</code>, <code>trades_count</code>, <code>bars_count</code>, <code>server_time</code>
+                </div>
+                <button class="api-try-btn" onclick="tryApiEndpoint('/api/v1/sync/binance/BTCUSDT/latest', 'sync-latest-response')">Try (BTCUSDT)</button>
+                <div class="api-response" id="sync-latest-response" style="display:none;"></div>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/sync/{exchange}/{symbol}/trades</span>
+                <div class="api-endpoint-desc">Get historical trades for desktop client sync</div>
+                <div class="api-endpoint-params">
+                    <strong>Query params:</strong> <code>since</code> (timestamp), <code>limit</code> (max 50000)
+                </div>
+                <button class="api-try-btn" onclick="tryApiEndpoint('/api/v1/sync/binance/BTCUSDT/trades?limit=100', 'sync-trades-response')">Try (100 trades)</button>
+                <div class="api-response" id="sync-trades-response" style="display:none;"></div>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/sync/{exchange}/{symbol}/bars</span>
+                <div class="api-endpoint-desc">Get pre-aggregated footprint bars for desktop client sync</div>
+                <div class="api-endpoint-params">
+                    <strong>Query params:</strong> <code>since</code> (timestamp), <code>limit</code> (max 500)<br>
+                    <strong>Response includes:</strong> <code>tick_count</code>, <code>tick_size</code>, <code>bars[]</code>
+                </div>
+                <button class="api-try-btn" onclick="tryApiEndpoint('/api/v1/sync/binance/BTCUSDT/bars?limit=10', 'sync-bars-response')">Try (10 bars)</button>
+                <div class="api-response" id="sync-bars-response" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <div class="api-section">
+            <div class="api-section-header">
+                <h3>🔧 Other Endpoints</h3>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/health</span>
+                <div class="api-endpoint-desc">Basic health check</div>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/health/detailed</span>
+                <div class="api-endpoint-desc">Detailed server health with connections, storage, memory stats</div>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/tickers</span>
+                <div class="api-endpoint-desc">Get all available tickers from all exchanges</div>
+            </div>
+            
+            <div class="api-endpoint">
+                <span class="api-endpoint-method get">GET</span>
+                <span class="api-endpoint-path">/api/v1/backup-trades/{exchange}/{symbol}</span>
+                <div class="api-endpoint-desc">Fetch recent trades from exchange REST API (for gap filling)</div>
+                <div class="api-endpoint-params">
+                    <strong>Query params:</strong> <code>limit</code> (max 1000)
+                </div>
+            </div>
+        </div>
+        
+        <div class="api-section">
+            <div class="api-section-header">
+                <h3>📖 Desktop Client Integration</h3>
+            </div>
+            <div class="api-endpoint">
+                <div class="api-endpoint-desc">
+                    <strong>Sync Flow for Desktop Client:</strong><br><br>
+                    1. Call <code>GET /api/v1/sync/{exchange}/{symbol}/latest</code> to get server's latest timestamp<br><br>
+                    2. Start exchange WebSocket connection for live trades (from current time forward)<br><br>
+                    3. Call <code>GET /api/v1/sync/{exchange}/{symbol}/trades?since=0</code> to get historical trades<br><br>
+                    4. Merge historical trades with live trades, deduplicate by timestamp<br><br>
+                    5. Build continuous footprint chart with no gaps
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Copy API key to clipboard
+function copyApiKey(apiKey) {
+    navigator.clipboard.writeText(apiKey).then(() => {
+        alert('API Key copied to clipboard!');
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        prompt('Copy this API Key:', apiKey);
+    });
+}
+
+// Regenerate API key (invalidates old key)
+async function regenerateApiKey() {
+    if (!confirm('⚠️ WARNING: This will invalidate the current API key!\n\nAll desktop clients using the old key will be disconnected.\n\nAre you sure you want to regenerate the API key?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/api-key/regenerate`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('✅ API Key regenerated successfully!\n\nNew key: ' + data.api_key + '\n\nPlease update your desktop client with the new key.');
+            // Refresh the API dashboard to show new key
+            renderApiDashboard();
+        } else {
+            alert('❌ Failed to regenerate API key: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('❌ Error regenerating API key: ' + e.message);
+    }
+}
+
+// Try API endpoint and display response
+async function tryApiEndpoint(endpoint, responseId) {
+    const responseEl = document.getElementById(responseId);
+    responseEl.style.display = 'block';
+    responseEl.textContent = 'Loading...';
+    
+    try {
+        const response = await fetch(endpoint);
+        const data = await response.json();
+        responseEl.textContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+        responseEl.textContent = 'Error: ' + e.message;
+        responseEl.style.color = '#ef5350';
+    }
 }
