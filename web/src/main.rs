@@ -27,9 +27,13 @@ async fn main() -> std::io::Result<()> {
     // Initialize logging
     setup_logging().expect("Failed to setup logging");
     
+    // Initialize start time for uptime tracking
+    api::init_start_time();
+    
     log::info!("🚀 Tick Collector Web v0.1.0 starting...");
     log::info!("📊 Dashboard: http://localhost:8080");
     log::info!("🔧 API: http://localhost:8080/api/v1");
+    log::info!("💚 Health: http://localhost:8080/health.html");
     
     // Get static files path
     let static_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "static"].iter().collect();
@@ -59,6 +63,11 @@ async fn main() -> std::io::Result<()> {
                     .route("/tickers/{exchange}/{symbol}/trades", web::get().to(api::get_trades))
                     .route("/config", web::get().to(api::get_config))
                     .route("/config", web::post().to(api::save_config))
+                    // Health monitoring
+                    .route("/health/detailed", web::get().to(api::health_detailed))
+                    // Footprint data persistence (server-side storage)
+                    .route("/footprint/{exchange}/{symbol}", web::get().to(api::get_footprint))
+                    .route("/footprint/{exchange}/{symbol}", web::post().to(api::save_footprint))
             )
             // WebSocket for live data
             .route("/ws/live/{exchange}/{symbol}", web::get().to(websocket::ws_handler))

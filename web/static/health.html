@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Health - Tick Collector</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: #131313;
+            border-bottom: 1px solid #2a2a2a;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+        }
+        
+        .header-nav {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .nav-btn {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            color: #e0e0e0;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        
+        .nav-btn:hover {
+            background: #2a2a2a;
+            border-color: #444;
+        }
+        
+        .nav-btn.active {
+            background: #26a69a;
+            border-color: #26a69a;
+            color: #fff;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .status-banner {
+            background: linear-gradient(135deg, #1a472a 0%, #0d2818 100%);
+            border: 1px solid #26a69a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .status-banner.error {
+            background: linear-gradient(135deg, #4a1a1a 0%, #2a0d0d 100%);
+            border-color: #ef5350;
+        }
+        
+        .status-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: #26a69a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        
+        .status-banner.error .status-icon {
+            background: #ef5350;
+        }
+        
+        .status-info h2 {
+            font-size: 20px;
+            margin-bottom: 4px;
+        }
+        
+        .status-info p {
+            color: #888;
+            font-size: 14px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: #131313;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+        }
+        
+        .stat-card h3 {
+            font-size: 13px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .stat-card h3 .icon {
+            font-size: 16px;
+        }
+        
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        
+        .stat-value.green { color: #26a69a; }
+        .stat-value.yellow { color: #ffc107; }
+        .stat-value.red { color: #ef5350; }
+        
+        .stat-label {
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .stat-details {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #2a2a2a;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 13px;
+        }
+        
+        .stat-row .label {
+            color: #888;
+        }
+        
+        .stat-row .value {
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+        
+        .tickers-section {
+            background: #131313;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .tickers-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a2a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .tickers-header h3 {
+            font-size: 15px;
+            font-weight: 600;
+        }
+        
+        .tickers-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .tickers-table th {
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #1a1a1a;
+            border-bottom: 1px solid #2a2a2a;
+        }
+        
+        .tickers-table td {
+            padding: 12px 16px;
+            font-size: 13px;
+            border-bottom: 1px solid #1e1e1e;
+        }
+        
+        .tickers-table tr:hover {
+            background: #1a1a1a;
+        }
+        
+        .exchange-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .exchange-badge.binance { background: #f3ba2f20; color: #f3ba2f; }
+        .exchange-badge.bybit { background: #f7a60020; color: #f7a600; }
+        .exchange-badge.okx { background: #ffffff20; color: #ffffff; }
+        
+        .subscriber-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            background: #26a69a20;
+            color: #26a69a;
+        }
+        
+        .subscriber-badge.inactive {
+            background: #66666620;
+            color: #666;
+        }
+        
+        .refresh-info {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error-message {
+            background: #ef535020;
+            border: 1px solid #ef5350;
+            border-radius: 8px;
+            padding: 16px;
+            color: #ef5350;
+            margin: 20px 0;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .live-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #26a69a;
+        }
+        
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #26a69a;
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🖥️ Server Health Dashboard</h1>
+        <div class="header-nav">
+            <a href="/" class="nav-btn">📊 Charts</a>
+            <a href="/health.html" class="nav-btn active">💚 Health</a>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div id="content">
+            <div class="loading">Loading health data...</div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.origin;
+        let refreshInterval = null;
+        
+        async function loadHealthData() {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/health/detailed`);
+                if (!response.ok) throw new Error('Failed to fetch health data');
+                
+                const data = await response.json();
+                renderHealthDashboard(data);
+            } catch (error) {
+                document.getElementById('content').innerHTML = `
+                    <div class="error-message">
+                        <strong>Error:</strong> ${error.message}
+                        <br><br>
+                        Make sure the server is running at ${API_BASE}
+                    </div>
+                `;
+            }
+        }
+        
+        function formatUptime(seconds) {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+            if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+            if (minutes > 0) return `${minutes}m ${secs}s`;
+            return `${secs}s`;
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function formatPrice(price) {
+            if (price >= 1000) return price.toLocaleString('en-US', { maximumFractionDigits: 0 });
+            if (price >= 1) return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+        }
+        
+        function renderHealthDashboard(data) {
+            const isHealthy = data.status === 'ok';
+            const activeSubscribers = data.active_tickers.filter(t => t.subscribers > 0);
+            
+            document.getElementById('content').innerHTML = `
+                <div class="status-banner ${isHealthy ? '' : 'error'}">
+                    <div class="status-icon">${isHealthy ? '✓' : '✗'}</div>
+                    <div class="status-info">
+                        <h2>Server ${isHealthy ? 'Healthy' : 'Unhealthy'}</h2>
+                        <p>Version ${data.version} • Uptime: ${formatUptime(data.uptime_seconds)}</p>
+                    </div>
+                    <div style="margin-left: auto;">
+                        <span class="live-indicator">
+                            <span class="live-dot"></span>
+                            Live • Auto-refresh 5s
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3><span class="icon">🔗</span> Connections</h3>
+                        <div class="stat-value green">${data.connections.active_websocket_subscribers}</div>
+                        <div class="stat-label">Active WebSocket Subscribers</div>
+                        <div class="stat-details">
+                            <div class="stat-row">
+                                <span class="label">Total Tickers</span>
+                                <span class="value">${data.connections.total_tickers}</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="label">Exchanges</span>
+                                <span class="value">${data.connections.exchanges_connected.join(', ')}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <h3><span class="icon">💾</span> Storage</h3>
+                        <div class="stat-value">${data.storage.footprint_files}</div>
+                        <div class="stat-label">Footprint Data Files</div>
+                        <div class="stat-details">
+                            <div class="stat-row">
+                                <span class="label">Total Size</span>
+                                <span class="value">${formatBytes(data.storage.total_size_bytes)}</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="label">Oldest Data</span>
+                                <span class="value">${data.storage.oldest_file_age_hours.toFixed(1)}h ago</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="label">Newest Data</span>
+                                <span class="value">${data.storage.newest_file_age_hours.toFixed(1)}h ago</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <h3><span class="icon">🧠</span> Memory</h3>
+                        <div class="stat-value">${data.memory.trades_in_memory.toLocaleString()}</div>
+                        <div class="stat-label">Trades in Memory</div>
+                        <div class="stat-details">
+                            <div class="stat-row">
+                                <span class="label">Candles in Memory</span>
+                                <span class="value">${data.memory.candles_in_memory.toLocaleString()}</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="label">Symbols Tracked</span>
+                                <span class="value">${data.memory.symbols_tracked}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <h3><span class="icon">⏱️</span> Uptime</h3>
+                        <div class="stat-value green">${formatUptime(data.uptime_seconds)}</div>
+                        <div class="stat-label">Server Running</div>
+                        <div class="stat-details">
+                            <div class="stat-row">
+                                <span class="label">Server Time</span>
+                                <span class="value">${new Date(data.server_time).toLocaleTimeString()}</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="label">Status</span>
+                                <span class="value" style="color: #26a69a;">● Online</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tickers-section">
+                    <div class="tickers-header">
+                        <h3>📈 Active Tickers (${data.active_tickers.length})</h3>
+                        <span class="refresh-info">Sorted by subscribers</span>
+                    </div>
+                    <table class="tickers-table">
+                        <thead>
+                            <tr>
+                                <th>Exchange</th>
+                                <th>Symbol</th>
+                                <th>Price</th>
+                                <th>Trades</th>
+                                <th>Subscribers</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.active_tickers.map(ticker => `
+                                <tr>
+                                    <td><span class="exchange-badge ${ticker.exchange}">${ticker.exchange}</span></td>
+                                    <td><strong>${ticker.symbol}</strong></td>
+                                    <td>$${formatPrice(ticker.price)}</td>
+                                    <td>${ticker.trades_count.toLocaleString()}</td>
+                                    <td>
+                                        <span class="subscriber-badge ${ticker.subscribers === 0 ? 'inactive' : ''}">
+                                            ${ticker.subscribers > 0 ? '●' : '○'} ${ticker.subscribers}
+                                        </span>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        // Initial load
+        loadHealthData();
+        
+        // Auto-refresh every 5 seconds
+        refreshInterval = setInterval(loadHealthData, 5000);
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (refreshInterval) clearInterval(refreshInterval);
+        });
+    </script>
+</body>
+</html>

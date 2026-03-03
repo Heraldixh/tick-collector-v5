@@ -1,0 +1,1 @@
+D:\tick-collector-v5\web\target\release\tick-collector-web.exe: D:\tick-collector-v5\web\src\api.rs D:\tick-collector-v5\web\src\exchange.rs D:\tick-collector-v5\web\src\main.rs D:\tick-collector-v5\web\src\state.rs D:\tick-collector-v5\web\src\websocket.rs

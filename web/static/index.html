@@ -80,8 +80,16 @@
             </div>
         </aside>
         
-        <!-- Main Content - 3x3 Chart Grid -->
+        <!-- Main Content -->
         <main class="main-content">
+            <!-- Tab Navigation -->
+            <div class="main-tabs">
+                <button class="main-tab active" data-tab="charts">📊 Charts</button>
+                <button class="main-tab" data-tab="health">💚 Health</button>
+            </div>
+            
+            <!-- Charts View -->
+            <div class="tab-content active" id="chartsView">
             <div class="chart-grid" id="chartGrid">
                 <!-- 9 chart panes -->
                 <div class="chart-pane" data-pane="0">
@@ -244,6 +252,16 @@
                     <div class="pane-content">
                         <div class="chart-container" id="chart-8"></div>
                         <div class="pane-placeholder">Select a ticker from the sidebar</div>
+                    </div>
+                </div>
+            </div>
+            </div>
+            
+            <!-- Health View -->
+            <div class="tab-content" id="healthView">
+                <div class="health-dashboard">
+                    <div id="healthContent">
+                        <div class="health-loading">Loading health data...</div>
                     </div>
                 </div>
             </div>

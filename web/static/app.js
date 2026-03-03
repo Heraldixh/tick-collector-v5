@@ -34,10 +34,17 @@ const WS_BASE = window.location.port === '8080'
 // Constants
 const RECONNECT_DELAY = 5000;
 const TICK_AGGREGATION_OPTIONS = [100, 500, 1000, 2000, 5000];
+const DATA_RETENTION_DAYS = 7; // Keep 7 days of data
+const SAVE_INTERVAL_MS = 10000; // Auto-save every 10 seconds (continuous collection)
+const SAVE_ON_BAR_COUNT = 5; // Also save every N completed bars
+const STORAGE_KEY_PREFIX = 'tc_footprint_'; // localStorage key prefix for footprint data
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 Tick Collector Web starting...');
+    
+    // Clean up old data (7-day retention)
+    cleanupOldData();
     
     // Load favorites from localStorage
     loadFavorites();
@@ -51,11 +58,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Setup event listeners
     setupEventListeners();
     
-    // Restore saved pane assignments
-    restorePanes();
+    // Restore saved pane assignments (async - loads data from server)
+    await restorePanes();
     
     // Update ticker count
     updateTickerCount();
+    
+    // Start periodic auto-save
+    startAutoSave();
     
     console.log('✅ App initialized');
 });
@@ -76,6 +86,201 @@ function loadFavorites() {
 function saveFavorites() {
     localStorage.setItem('tickCollectorFavorites', JSON.stringify([...state.favorites]));
 }
+
+// ============================================================================
+// LOCAL STORAGE PERSISTENCE FOR FOOTPRINT DATA (7-DAY RETENTION)
+// ============================================================================
+
+// Save footprint data for a specific ticker to SERVER (file-based persistence)
+async function saveFootprintData(tickerKey, footprintState) {
+    try {
+        const [exchange, symbol] = tickerKey.split(':');
+        
+        // Prepare data for storage - only save essential data
+        const dataToSave = {
+            timestamp: Date.now(),
+            ticker_key: tickerKey,
+            settings: {
+                tick_count: footprintState.tickCount,
+                tick_size_multiplier: footprintState.tickSizeMultiplier,
+                base_tick_size: footprintState.baseTickSize,
+                tick_size: footprintState.tickSize,
+            },
+            // Save completed bars (limit to last 200 bars for storage efficiency)
+            bars: (footprintState.bars || []).slice(-200).map(bar => ({
+                time: bar.time,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                priceLevels: bar.priceLevels,
+                pocPrice: bar.pocPrice,
+                isBullish: bar.isBullish,
+            })),
+            // Save raw trades for re-aggregation (limit to last 50k for storage)
+            all_trades: (footprintState.allTrades || []).slice(-50000),
+            // Save current buffer
+            tick_buffer: footprintState.tickBuffer || [],
+            // Price range
+            last_price: footprintState.lastPrice,
+            high_price: footprintState.highPrice,
+            low_price: footprintState.lowPrice,
+        };
+        
+        // Save to server via API
+        const response = await fetch(`${API_BASE}/api/v1/footprint/${exchange}/${symbol}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dataToSave),
+        });
+        
+        if (response.ok) {
+            console.log(`💾 Saved ${tickerKey}: ${dataToSave.bars.length} bars, ${dataToSave.all_trades.length} trades (server)`);
+        } else {
+            console.error(`Failed to save footprint data for ${tickerKey}: ${response.status}`);
+        }
+    } catch (e) {
+        console.error(`Failed to save footprint data for ${tickerKey}:`, e);
+    }
+}
+
+// Load footprint data for a specific ticker from SERVER (file-based persistence)
+async function loadFootprintData(tickerKey) {
+    try {
+        const [exchange, symbol] = tickerKey.split(':');
+        
+        const response = await fetch(`${API_BASE}/api/v1/footprint/${exchange}/${symbol}`);
+        
+        if (!response.ok) {
+            console.log(`No saved data for ${tickerKey}`);
+            return null;
+        }
+        
+        const data = await response.json();
+        
+        if (!data) {
+            console.log(`No saved data for ${tickerKey}`);
+            return null;
+        }
+        
+        // Convert snake_case to camelCase for client use
+        const converted = {
+            timestamp: data.timestamp,
+            tickerKey: data.ticker_key,
+            settings: {
+                tickCount: data.settings?.tick_count,
+                tickSizeMultiplier: data.settings?.tick_size_multiplier,
+                baseTickSize: data.settings?.base_tick_size,
+                tickSize: data.settings?.tick_size,
+            },
+            bars: data.bars || [],
+            allTrades: data.all_trades || [],
+            tickBuffer: data.tick_buffer || [],
+            lastPrice: data.last_price,
+            highPrice: data.high_price,
+            lowPrice: data.low_price,
+        };
+        
+        const ageMs = Date.now() - converted.timestamp;
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        
+        console.log(`📂 Loaded ${tickerKey}: ${converted.bars?.length || 0} bars, ${converted.allTrades?.length || 0} trades (${ageDays.toFixed(1)} days old) [server]`);
+        return converted;
+    } catch (e) {
+        console.error(`Failed to load footprint data for ${tickerKey}:`, e);
+        return null;
+    }
+}
+
+// Clean up old data beyond retention period
+function cleanupOldData(aggressive = false) {
+    console.log('🧹 Cleaning up old footprint data...');
+    const now = Date.now();
+    const retentionMs = DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    let removedCount = 0;
+    
+    // Iterate through all localStorage keys
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(STORAGE_KEY_PREFIX)) continue;
+        
+        try {
+            const data = JSON.parse(localStorage.getItem(key));
+            const age = now - (data.timestamp || 0);
+            
+            // Remove if older than retention period, or if aggressive cleanup
+            if (age > retentionMs || (aggressive && age > retentionMs / 2)) {
+                localStorage.removeItem(key);
+                removedCount++;
+                console.log(`🗑️ Removed old data: ${key}`);
+            }
+        } catch (e) {
+            // If we can't parse it, remove it
+            localStorage.removeItem(key);
+            removedCount++;
+        }
+    }
+    
+    if (removedCount > 0) {
+        console.log(`🧹 Cleaned up ${removedCount} old data entries`);
+    }
+}
+
+// Start periodic auto-save for all active panes (CONTINUOUS COLLECTION MODE)
+function startAutoSave() {
+    // Auto-save every SAVE_INTERVAL_MS (10 seconds)
+    setInterval(() => {
+        state.panes.forEach((pane, index) => {
+            if (pane && pane.ticker && pane.footprintState) {
+                saveFootprintData(pane.ticker, pane.footprintState);
+            }
+        });
+    }, SAVE_INTERVAL_MS);
+    
+    // Periodic cleanup every hour (7-day retention)
+    setInterval(() => {
+        cleanupOldData();
+    }, 60 * 60 * 1000); // Every hour
+    
+    // Also save on page unload (backup)
+    window.addEventListener('beforeunload', () => {
+        state.panes.forEach((pane, index) => {
+            if (pane && pane.ticker && pane.footprintState) {
+                saveFootprintData(pane.ticker, pane.footprintState);
+            }
+        });
+    });
+    
+    console.log(`⏰ Continuous save started (every ${SAVE_INTERVAL_MS / 1000}s + every ${SAVE_ON_BAR_COUNT} bars)`);
+    console.log(`🧹 Retention cleanup scheduled (every hour, ${DATA_RETENTION_DAYS}-day retention)`);
+}
+
+// Get storage usage info
+function getStorageInfo() {
+    let totalSize = 0;
+    let footprintSize = 0;
+    let footprintCount = 0;
+    
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        const value = localStorage.getItem(key);
+        const size = (key.length + value.length) * 2; // UTF-16 = 2 bytes per char
+        totalSize += size;
+        
+        if (key.startsWith(STORAGE_KEY_PREFIX)) {
+            footprintSize += size;
+            footprintCount++;
+        }
+    }
+    
+    return {
+        totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
+        footprintSizeMB: (footprintSize / (1024 * 1024)).toFixed(2),
+        footprintCount,
+    };
+}
+
+// ============================================================================
 
 // Toggle favorite status
 function toggleFavorite(tickerKey) {
@@ -331,6 +536,14 @@ function setupEventListeners() {
         state.filters.largeVolumeOnly = e.target.checked;
         renderTickerList();
         saveConfig();
+    });
+    
+    // Main tab navigation
+    document.querySelectorAll('.main-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            const tabName = tab.dataset.tab;
+            switchTab(tabName);
+        });
     });
     
     // Exchange filter buttons
@@ -592,7 +805,7 @@ function updateExchangeFilterButtons() {
 }
 
 // Toggle ticker on/off
-function toggleTicker(tickerKey) {
+async function toggleTicker(tickerKey) {
     const existingIndex = state.panes.findIndex(p => p?.ticker === tickerKey);
     
     if (existingIndex >= 0) {
@@ -602,7 +815,7 @@ function toggleTicker(tickerKey) {
         // Turn on - find first empty pane
         const emptyIndex = state.panes.findIndex(p => p === null);
         if (emptyIndex >= 0) {
-            assignTickerToPane(tickerKey, emptyIndex);
+            await assignTickerToPane(tickerKey, emptyIndex);
         } else {
             console.warn('All panes are occupied');
         }
@@ -613,7 +826,7 @@ function toggleTicker(tickerKey) {
 }
 
 // Assign ticker to a specific pane with FOOTPRINT CHART (matching desktop exactly)
-function assignTickerToPane(tickerKey, paneIndex) {
+async function assignTickerToPane(tickerKey, paneIndex) {
     const [exchange, symbol] = tickerKey.split(':');
     
     // Create footprint chart canvas (custom implementation matching desktop)
@@ -629,19 +842,22 @@ function assignTickerToPane(tickerKey, paneIndex) {
     
     const ctx = canvas.getContext('2d');
     
-    // Footprint chart state
+    // Try to load saved data from SERVER (async)
+    const savedData = await loadFootprintData(tickerKey);
+    
+    // Footprint chart state - restore from saved data if available
     const footprintState = {
-        bars: [], // Array of footprint bars
+        bars: savedData?.bars || [], // Array of footprint bars
         currentBar: null,
-        tickBuffer: [],
-        allTrades: [], // Store ALL raw trades for re-aggregation
-        tickCount: 1000, // 1000T aggregation (matching desktop default)
-        baseTickSize: 0.1, // Base tick size (auto-detected from price)
-        tickSizeMultiplier: 50, // Default 50x multiplier
-        tickSize: 5, // Effective tick size = baseTickSize * multiplier
-        lastPrice: null,
-        highPrice: null,
-        lowPrice: null,
+        tickBuffer: savedData?.tickBuffer || [],
+        allTrades: savedData?.allTrades || [], // Store ALL raw trades for re-aggregation
+        tickCount: savedData?.settings?.tickCount || 1000, // 1000T aggregation (matching desktop default)
+        baseTickSize: savedData?.settings?.baseTickSize || 0.1, // Base tick size (auto-detected from price)
+        tickSizeMultiplier: savedData?.settings?.tickSizeMultiplier || 50, // Default 50x multiplier
+        tickSize: savedData?.settings?.tickSize || 5, // Effective tick size = baseTickSize * multiplier
+        lastPrice: savedData?.lastPrice || null,
+        highPrice: savedData?.highPrice || null,
+        lowPrice: savedData?.lowPrice || null,
         viewOffset: 0,
         scale: 1,
         priceRange: { high: 0, low: 0 },
@@ -649,6 +865,16 @@ function assignTickerToPane(tickerKey, paneIndex) {
         renderFootprint: null, // Will hold reference to render function
         createFootprintBar: null, // Will hold reference to bar creation function
     };
+    
+    // Update UI buttons with restored settings
+    const tickBtn = document.querySelector(`.tick-count-btn[data-pane="${paneIndex}"]`);
+    if (tickBtn) tickBtn.textContent = `${footprintState.tickCount}T`;
+    const tickSizeBtn = document.querySelector(`.tick-size-btn[data-pane="${paneIndex}"]`);
+    if (tickSizeBtn) tickSizeBtn.textContent = `${footprintState.tickSizeMultiplier}x`;
+    
+    if (savedData) {
+        console.log(`📊 Restored ${tickerKey}: ${footprintState.bars.length} bars, ${footprintState.allTrades.length} trades`);
+    }
     
     // Colors matching desktop footprint chart exactly
     // Desktop uses: buy_qty on RIGHT (green), sell_qty on LEFT (red)
@@ -1211,10 +1437,22 @@ function assignTickerToPane(tickerKey, paneIndex) {
                     footprintState.bars.push(footprintState.currentBar);
                     footprintState.tickBuffer = [];
                     footprintState.currentBar = null;
+                    footprintState.barsSinceLastSave = (footprintState.barsSinceLastSave || 0) + 1;
                     
-                    // Keep max 50 bars for performance
-                    if (footprintState.bars.length > 50) {
-                        footprintState.bars = footprintState.bars.slice(-40);
+                    // Keep max 200 bars for display (more for storage)
+                    if (footprintState.bars.length > 200) {
+                        footprintState.bars = footprintState.bars.slice(-150);
+                    }
+                    
+                    // Trim allTrades to prevent memory overflow (keep last 100k)
+                    if (footprintState.allTrades.length > 100000) {
+                        footprintState.allTrades = footprintState.allTrades.slice(-80000);
+                    }
+                    
+                    // CONTINUOUS SAVE: Save every N completed bars
+                    if (footprintState.barsSinceLastSave >= SAVE_ON_BAR_COUNT) {
+                        saveFootprintData(tickerKey, footprintState);
+                        footprintState.barsSinceLastSave = 0;
                     }
                 }
                 
@@ -1302,6 +1540,11 @@ function clearPane(paneIndex) {
     const pane = state.panes[paneIndex];
     if (!pane) return;
     
+    // Save footprint data before clearing (persist to localStorage)
+    if (pane.ticker && pane.footprintState) {
+        saveFootprintData(pane.ticker, pane.footprintState);
+    }
+    
     // Clear reconnect timer
     if (pane.reconnectTimer) {
         clearTimeout(pane.reconnectTimer);
@@ -1366,14 +1609,15 @@ async function saveConfig() {
 }
 
 // Restore panes from saved config
-function restorePanes() {
+async function restorePanes() {
     // Try server config first
     if (state.config?.pane_tickers) {
-        state.config.pane_tickers.forEach((ticker, i) => {
+        for (let i = 0; i < state.config.pane_tickers.length; i++) {
+            const ticker = state.config.pane_tickers[i];
             if (ticker) {
-                assignTickerToPane(ticker, i);
+                await assignTickerToPane(ticker, i);
             }
-        });
+        }
         return;
     }
     
@@ -1382,13 +1626,219 @@ function restorePanes() {
         const saved = localStorage.getItem('tickCollectorConfig');
         if (saved) {
             const config = JSON.parse(saved);
-            config.pane_tickers?.forEach((ticker, i) => {
-                if (ticker) {
-                    assignTickerToPane(ticker, i);
+            if (config.pane_tickers) {
+                for (let i = 0; i < config.pane_tickers.length; i++) {
+                    const ticker = config.pane_tickers[i];
+                    if (ticker) {
+                        await assignTickerToPane(ticker, i);
+                    }
                 }
-            });
+            }
         }
     } catch (e) {
         console.error('Failed to restore panes:', e);
     }
+}
+
+// ============================================================================
+// TAB NAVIGATION AND HEALTH DASHBOARD
+// ============================================================================
+
+let healthRefreshInterval = null;
+
+// Switch between tabs
+function switchTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.main-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.tab === tabName);
+    });
+    
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    
+    if (tabName === 'charts') {
+        document.getElementById('chartsView').classList.add('active');
+        stopHealthRefresh();
+    } else if (tabName === 'health') {
+        document.getElementById('healthView').classList.add('active');
+        loadHealthData();
+        startHealthRefresh();
+    }
+}
+
+// Start health data auto-refresh
+function startHealthRefresh() {
+    if (healthRefreshInterval) return;
+    healthRefreshInterval = setInterval(loadHealthData, 5000);
+}
+
+// Stop health data auto-refresh
+function stopHealthRefresh() {
+    if (healthRefreshInterval) {
+        clearInterval(healthRefreshInterval);
+        healthRefreshInterval = null;
+    }
+}
+
+// Load health data from server
+async function loadHealthData() {
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/health/detailed`);
+        if (!response.ok) throw new Error('Failed to fetch health data');
+        
+        const data = await response.json();
+        renderHealthDashboard(data);
+    } catch (error) {
+        document.getElementById('healthContent').innerHTML = `
+            <div class="health-error">
+                <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Format uptime for display
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+    if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+}
+
+// Format bytes for display
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Render health dashboard
+function renderHealthDashboard(data) {
+    const isHealthy = data.status === 'ok';
+    
+    document.getElementById('healthContent').innerHTML = `
+        <div class="health-status-banner ${isHealthy ? '' : 'error'}">
+            <div class="health-status-icon">${isHealthy ? '✓' : '✗'}</div>
+            <div class="health-status-info">
+                <h2>Server ${isHealthy ? 'Healthy' : 'Unhealthy'}</h2>
+                <p>Version ${data.version} • Uptime: ${formatUptime(data.uptime_seconds)}</p>
+            </div>
+            <div class="health-live-indicator">
+                <span class="health-live-dot"></span>
+                Live • Auto-refresh 5s
+            </div>
+        </div>
+        
+        <div class="health-stats-grid">
+            <div class="health-stat-card">
+                <h3>🔗 Connections</h3>
+                <div class="health-stat-value green">${data.connections.active_websocket_subscribers}</div>
+                <div class="health-stat-label">Active WebSocket Subscribers</div>
+                <div class="health-stat-details">
+                    <div class="health-stat-row">
+                        <span class="label">Total Tickers</span>
+                        <span class="value">${data.connections.total_tickers}</span>
+                    </div>
+                    <div class="health-stat-row">
+                        <span class="label">Exchanges</span>
+                        <span class="value">${data.connections.exchanges_connected.join(', ')}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="health-stat-card">
+                <h3>💾 Storage</h3>
+                <div class="health-stat-value">${data.storage.footprint_files}</div>
+                <div class="health-stat-label">Footprint Data Files</div>
+                <div class="health-stat-details">
+                    <div class="health-stat-row">
+                        <span class="label">Total Size</span>
+                        <span class="value">${formatBytes(data.storage.total_size_bytes)}</span>
+                    </div>
+                    <div class="health-stat-row">
+                        <span class="label">Oldest Data</span>
+                        <span class="value">${data.storage.oldest_file_age_hours.toFixed(1)}h ago</span>
+                    </div>
+                    <div class="health-stat-row">
+                        <span class="label">Newest Data</span>
+                        <span class="value">${data.storage.newest_file_age_hours.toFixed(1)}h ago</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="health-stat-card">
+                <h3>🧠 Memory</h3>
+                <div class="health-stat-value">${data.memory.trades_in_memory.toLocaleString()}</div>
+                <div class="health-stat-label">Trades in Memory</div>
+                <div class="health-stat-details">
+                    <div class="health-stat-row">
+                        <span class="label">Candles in Memory</span>
+                        <span class="value">${data.memory.candles_in_memory.toLocaleString()}</span>
+                    </div>
+                    <div class="health-stat-row">
+                        <span class="label">Symbols Tracked</span>
+                        <span class="value">${data.memory.symbols_tracked}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="health-stat-card">
+                <h3>⏱️ Uptime</h3>
+                <div class="health-stat-value green">${formatUptime(data.uptime_seconds)}</div>
+                <div class="health-stat-label">Server Running</div>
+                <div class="health-stat-details">
+                    <div class="health-stat-row">
+                        <span class="label">Server Time</span>
+                        <span class="value">${new Date(data.server_time).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="health-stat-row">
+                        <span class="label">Status</span>
+                        <span class="value" style="color: #26a69a;">● Online</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="health-tickers-section">
+            <div class="health-tickers-header">
+                <h3>📈 Active Tickers (${data.active_tickers.length})</h3>
+                <span class="health-refresh-info">Sorted by subscribers</span>
+            </div>
+            <table class="health-tickers-table">
+                <thead>
+                    <tr>
+                        <th>Exchange</th>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>Trades</th>
+                        <th>Subscribers</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.active_tickers.map(ticker => `
+                        <tr>
+                            <td><span class="health-exchange-badge ${ticker.exchange}">${ticker.exchange}</span></td>
+                            <td><strong>${ticker.symbol}</strong></td>
+                            <td>$${formatPrice(ticker.price)}</td>
+                            <td>${ticker.trades_count.toLocaleString()}</td>
+                            <td>
+                                <span class="health-subscriber-badge ${ticker.subscribers === 0 ? 'inactive' : ''}">
+                                    ${ticker.subscribers > 0 ? '●' : '○'} ${ticker.subscribers}
+                                </span>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
 }
