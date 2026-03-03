@@ -301,8 +301,9 @@ use parking_lot::Mutex;
 // Track which streams are already running to avoid duplicates
 static ACTIVE_STREAMS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
-/// Start a single stream for a specific ticker (called when client connects)
-/// This stream will auto-reconnect on disconnect to ensure continuous data
+/// Start a persistent stream for a specific ticker (runs 24/7 for configured tickers)
+/// This stream will auto-reconnect on disconnect to ensure continuous data collection
+/// Data is collected regardless of whether any browser clients are connected
 pub async fn start_single_stream(
     state: Arc<RwLock<AppState>>,
     exchange: &str,
@@ -319,13 +320,14 @@ pub async fn start_single_stream(
         active.insert(key.to_string());
     }
     
-    log::info!("Starting on-demand stream with auto-reconnect: {}", key);
+    log::info!("🚀 Starting PERSISTENT stream (24/7 collection): {}", key);
     
     let exchange_owned = exchange.to_string();
     let symbol_owned = symbol.to_string();
     let key_owned = key.to_string();
     
-    // Auto-reconnect loop - keeps stream alive as long as there are subscribers
+    // PERSISTENT auto-reconnect loop - runs 24/7 regardless of browser connections
+    // Only stops if the ticker is explicitly removed from config
     loop {
         let result = match exchange_owned.as_str() {
             "binance" => connect_binance_stream(&key_owned, &symbol_owned, &state).await,
@@ -340,28 +342,24 @@ pub async fn start_single_stream(
         
         match result {
             Ok(_) => {
-                log::warn!("On-demand stream {} ended normally, reconnecting...", key_owned);
+                log::warn!("Stream {} ended normally, reconnecting immediately...", key_owned);
             }
             Err(e) => {
-                log::error!("On-demand stream {} error: {}, reconnecting in 3s...", key_owned, e);
+                log::error!("Stream {} error: {}, reconnecting in 3s...", key_owned, e);
             }
         }
         
-        // Check if there are still subscribers before reconnecting
-        let has_subscribers = {
-            let state_guard = state.read();
-            state_guard.subscribers.get(&key_owned)
-                .map(|subs| !subs.is_empty())
-                .unwrap_or(false)
-        };
+        // Check if ticker is still in the saved config (admin hasn't removed it)
+        let still_configured = check_ticker_in_config(&key_owned);
         
-        if !has_subscribers {
-            log::info!("No more subscribers for {}, stopping stream", key_owned);
+        if !still_configured {
+            log::info!("Ticker {} removed from config, stopping stream", key_owned);
             break;
         }
         
-        // Wait before reconnecting
+        // Wait before reconnecting (shorter delay for faster recovery)
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        log::info!("🔄 Reconnecting stream: {}", key_owned);
     }
     
     // Remove from active streams when done
@@ -370,13 +368,25 @@ pub async fn start_single_stream(
         active.remove(&key_owned);
     }
     
-    log::info!("On-demand stream {} fully stopped", key);
+    log::info!("Stream {} stopped (removed from config)", key);
+}
+
+/// Check if a ticker is still in the saved config
+fn check_ticker_in_config(key: &str) -> bool {
+    let config_path = "data/config.json";
+    if let Ok(contents) = std::fs::read_to_string(config_path) {
+        if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
+            return config.pane_tickers.iter().any(|t| t.as_ref() == Some(&key.to_string()));
+        }
+    }
+    // If config doesn't exist or can't be read, keep the stream running
+    true
 }
 
 /// Start WebSocket connections to exchanges
-/// NOTE: This only fetches ticker info for the sidebar list.
-/// Actual data collection ONLY happens for admin-selected active tickers
-/// when the admin assigns them to chart panes via the browser.
+/// This fetches ticker info for the sidebar and starts PERSISTENT 24/7 streams
+/// for all tickers configured in the admin's chart panes.
+/// Data collection runs continuously regardless of browser connections.
 pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
     // Fetch all tickers from all exchanges (for sidebar list only)
     log::info!("Fetching tickers from all exchanges (for sidebar list)...");
@@ -390,9 +400,9 @@ pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
         }
     }
     
-    log::info!("📋 Loaded {} tickers for sidebar. Data collection will start when admin assigns tickers to chart panes.", all_tickers.len());
+    log::info!("📋 Loaded {} tickers for sidebar.", all_tickers.len());
     
-    // Load saved config and start streams for previously active tickers
+    // Load saved config and start PERSISTENT 24/7 streams for configured tickers
     let config_path = "data/config.json";
     if let Ok(contents) = std::fs::read_to_string(config_path) {
         if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
@@ -405,6 +415,7 @@ pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
                         let exchange_owned = exchange.to_string();
                         let symbol_owned = symbol.to_string();
                         
+                        // Start PERSISTENT stream - runs 24/7 regardless of browser connections
                         tokio::spawn(async move {
                             start_single_stream(state_clone, &exchange_owned, &symbol_owned, &key).await;
                         });
@@ -413,13 +424,12 @@ pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
                 }
             }
             if active_count > 0 {
-                log::info!("🚀 Started {} streams for previously active tickers from saved config", active_count);
+                log::info!("🚀 Started {} PERSISTENT 24/7 streams from saved config", active_count);
             }
         }
     }
     
-    // NO automatic priority ticker connections - only admin-selected tickers
-    log::info!("✅ Server ready. Data collection only for admin-assigned chart panes.");
+    log::info!("✅ Server ready. Data collection runs 24/7 for configured tickers.");
 }
 
 async fn connect_binance_stream(
