@@ -2220,7 +2220,7 @@ function renderHealthDashboard(data) {
         <div class="health-tickers-section">
             <div class="health-tickers-header">
                 <h3>📈 Active Tickers (${data.active_tickers.length})</h3>
-                <span class="health-refresh-info">Sorted by subscribers</span>
+                <span class="health-refresh-info">Sorted by: Active → Has Data → No Data</span>
             </div>
             <table class="health-tickers-table">
                 <thead>
@@ -2234,7 +2234,23 @@ function renderHealthDashboard(data) {
                     </tr>
                 </thead>
                 <tbody>
-                    ${data.active_tickers.map(ticker => `
+                    ${data.active_tickers
+                        .sort((a, b) => {
+                            // Priority 1: Active tickers (subscribers > 0)
+                            // Priority 2: Inactive with data (trades_count > 0)
+                            // Priority 3: Inactive with no data
+                            const getPriority = (t) => {
+                                if (t.subscribers > 0) return 0; // Active - highest priority
+                                if (t.trades_count > 0) return 1; // Has data - secondary
+                                return 2; // No data - tertiary
+                            };
+                            const priorityDiff = getPriority(a) - getPriority(b);
+                            if (priorityDiff !== 0) return priorityDiff;
+                            // Within same priority, sort by trades_count desc, then subscribers desc
+                            if (a.trades_count !== b.trades_count) return b.trades_count - a.trades_count;
+                            return b.subscribers - a.subscribers;
+                        })
+                        .map(ticker => `
                         <tr>
                             <td><span class="health-exchange-badge ${ticker.exchange}">${ticker.exchange}</span></td>
                             <td><strong>${ticker.symbol}</strong></td>
