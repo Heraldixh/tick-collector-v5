@@ -206,6 +206,53 @@ const SAVE_INTERVAL_MS = 10000; // Auto-save every 10 seconds (continuous collec
 const SAVE_ON_BAR_COUNT = 5; // Also save every N completed bars
 const STORAGE_KEY_PREFIX = 'tc_footprint_'; // localStorage key prefix for footprint data
 
+// ============================================================================
+// VISIBILITY CHANGE HANDLER - Prevent browser throttling WebSocket connections
+// ============================================================================
+
+// Track if page is visible - browsers throttle background tabs
+let pageVisible = true;
+let reconnectOnVisible = false;
+
+document.addEventListener('visibilitychange', () => {
+    pageVisible = !document.hidden;
+    
+    if (pageVisible && reconnectOnVisible) {
+        console.log('🔄 Page became visible, checking WebSocket connections...');
+        reconnectOnVisible = false;
+        
+        // Check all panes and reconnect if needed
+        Object.entries(state.panes).forEach(([paneIndex, pane]) => {
+            if (pane && pane.ws) {
+                if (pane.ws.readyState !== WebSocket.OPEN) {
+                    console.log(`Reconnecting pane ${paneIndex} WebSocket...`);
+                    // Trigger reconnect by closing the stale connection
+                    pane.ws.close();
+                }
+            }
+        });
+    } else if (!pageVisible) {
+        // Mark that we should check connections when page becomes visible
+        reconnectOnVisible = true;
+    }
+});
+
+// Keep-alive ping to prevent WebSocket timeout (every 30 seconds)
+setInterval(() => {
+    if (pageVisible) {
+        Object.entries(state.panes).forEach(([paneIndex, pane]) => {
+            if (pane && pane.ws && pane.ws.readyState === WebSocket.OPEN) {
+                // Send a ping to keep connection alive
+                try {
+                    pane.ws.send(JSON.stringify({ type: 'ping' }));
+                } catch (e) {
+                    console.warn(`Ping failed for pane ${paneIndex}:`, e);
+                }
+            }
+        });
+    }
+}, 30000);
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 Tick Collector Web starting...');
