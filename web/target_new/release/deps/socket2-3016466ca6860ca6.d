@@ -1,0 +1,11 @@
+D:\tick-collector-v5\web\target_new\release\deps\socket2-3016466ca6860ca6.d: C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs
+
+D:\tick-collector-v5\web\target_new\release\deps\libsocket2-3016466ca6860ca6.rlib: C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs
+
+D:\tick-collector-v5\web\target_new\release\deps\libsocket2-3016466ca6860ca6.rmeta: C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs
+
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs:
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs:
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs:
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs:
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs:

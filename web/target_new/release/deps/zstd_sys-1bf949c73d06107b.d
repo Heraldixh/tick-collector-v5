@@ -1,0 +1,9 @@
+D:\tick-collector-v5\web\target_new\release\deps\zstd_sys-1bf949c73d06107b.d: C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\lib.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zstd.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zdict.rs
+
+D:\tick-collector-v5\web\target_new\release\deps\libzstd_sys-1bf949c73d06107b.rlib: C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\lib.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zstd.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zdict.rs
+
+D:\tick-collector-v5\web\target_new\release\deps\libzstd_sys-1bf949c73d06107b.rmeta: C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\lib.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zstd.rs C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zdict.rs
+
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\lib.rs:
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zstd.rs:
+C:\Users\Herald\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zstd-sys-2.0.16+zstd.1.5.7\src\bindings_zdict.rs:
