@@ -4,6 +4,173 @@
  * 100% Feature Parity with Desktop App
  */
 
+// ============================================================================
+// AUTHENTICATION
+// ============================================================================
+
+let isAuthenticated = false;
+let currentUsername = null;
+
+// Check authentication status on page load
+async function checkAuthStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/auth/status`);
+        const data = await response.json();
+        
+        if (!data.admin_configured) {
+            // First time setup - show setup form
+            showAuthModal('setup');
+            return false;
+        }
+        
+        if (!data.is_authenticated) {
+            // Not logged in - show login form
+            showAuthModal('login');
+            return false;
+        }
+        
+        // Authenticated
+        isAuthenticated = true;
+        hideAuthModal();
+        return true;
+    } catch (e) {
+        console.error('Auth check failed:', e);
+        showAuthModal('login');
+        return false;
+    }
+}
+
+// Show authentication modal
+function showAuthModal(type) {
+    const overlay = document.getElementById('authOverlay');
+    const setupForm = document.getElementById('setupForm');
+    const loginForm = document.getElementById('loginForm');
+    
+    overlay.classList.remove('hidden');
+    overlay.style.display = 'flex';
+    
+    if (type === 'setup') {
+        setupForm.style.display = 'block';
+        loginForm.style.display = 'none';
+        document.getElementById('setupUsername').focus();
+    } else {
+        setupForm.style.display = 'none';
+        loginForm.style.display = 'block';
+        document.getElementById('loginUsername').focus();
+    }
+}
+
+// Hide authentication modal
+function hideAuthModal() {
+    const overlay = document.getElementById('authOverlay');
+    overlay.classList.add('hidden');
+    overlay.style.display = 'none';
+}
+
+// Handle initial setup
+async function handleSetup() {
+    const username = document.getElementById('setupUsername').value.trim();
+    const password = document.getElementById('setupPassword').value;
+    const confirmPassword = document.getElementById('setupConfirmPassword').value;
+    const errorEl = document.getElementById('setupError');
+    
+    // Validation
+    if (!username) {
+        errorEl.textContent = 'Username is required';
+        return;
+    }
+    if (password.length < 4) {
+        errorEl.textContent = 'Password must be at least 4 characters';
+        return;
+    }
+    if (password !== confirmPassword) {
+        errorEl.textContent = 'Passwords do not match';
+        return;
+    }
+    
+    errorEl.textContent = '';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/auth/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            isAuthenticated = true;
+            currentUsername = data.username;
+            hideAuthModal();
+            initializeApp();
+        } else {
+            errorEl.textContent = data.error || 'Setup failed';
+        }
+    } catch (e) {
+        errorEl.textContent = 'Connection error: ' + e.message;
+    }
+}
+
+// Handle login
+async function handleLogin() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const errorEl = document.getElementById('loginError');
+    
+    if (!username || !password) {
+        errorEl.textContent = 'Username and password are required';
+        return;
+    }
+    
+    errorEl.textContent = '';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            isAuthenticated = true;
+            currentUsername = data.username;
+            hideAuthModal();
+            initializeApp();
+        } else {
+            errorEl.textContent = data.error || 'Login failed';
+        }
+    } catch (e) {
+        errorEl.textContent = 'Connection error: ' + e.message;
+    }
+}
+
+// Handle logout
+async function handleLogout() {
+    try {
+        await fetch(`${API_BASE}/api/v1/auth/logout`, { method: 'POST' });
+    } catch (e) {
+        console.error('Logout error:', e);
+    }
+    
+    isAuthenticated = false;
+    currentUsername = null;
+    showAuthModal('login');
+}
+
+// Handle Enter key on login/setup forms
+document.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        if (document.getElementById('setupForm').style.display !== 'none') {
+            handleSetup();
+        } else if (document.getElementById('loginForm').style.display !== 'none') {
+            handleLogin();
+        }
+    }
+});
+
 // State management
 const state = {
     tickers: [],
@@ -43,6 +210,21 @@ const STORAGE_KEY_PREFIX = 'tc_footprint_'; // localStorage key prefix for footp
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 Tick Collector Web starting...');
     
+    // Check authentication first
+    const authenticated = await checkAuthStatus();
+    if (!authenticated) {
+        console.log('⏳ Waiting for authentication...');
+        return; // Will call initializeApp() after successful login
+    }
+    
+    // Initialize the app
+    initializeApp();
+});
+
+// Initialize app after authentication
+async function initializeApp() {
+    console.log('🔓 Authenticated, initializing app...');
+    
     // Clean up old data (7-day retention)
     cleanupOldData();
     
@@ -68,7 +250,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     startAutoSave();
     
     console.log('✅ App initialized');
-});
+}
 
 // Load favorites from localStorage
 function loadFavorites() {
@@ -1885,6 +2067,10 @@ function switchTab(tabName) {
         document.getElementById('apiView').classList.add('active');
         stopHealthRefresh();
         renderApiDashboard();
+    } else if (tabName === 'admin') {
+        document.getElementById('adminView').classList.add('active');
+        stopHealthRefresh();
+        renderAdminDashboard();
     }
 }
 
@@ -2275,5 +2461,139 @@ async function tryApiEndpoint(endpoint, responseId) {
     } catch (e) {
         responseEl.textContent = 'Error: ' + e.message;
         responseEl.style.color = '#ef5350';
+    }
+}
+
+// ============================================================================
+// ADMIN DASHBOARD
+// ============================================================================
+
+// Render admin dashboard
+function renderAdminDashboard() {
+    const username = currentUsername || 'Admin';
+    
+    document.getElementById('adminContent').innerHTML = `
+        <div class="admin-header">
+            <div class="admin-header-icon">👤</div>
+            <div class="admin-header-info">
+                <h2>Admin Settings</h2>
+                <p>Logged in as: <strong>${username}</strong></p>
+            </div>
+            <button class="admin-logout-btn" onclick="handleLogout()">🚪 Logout</button>
+        </div>
+        
+        <div class="admin-section">
+            <div class="admin-section-header">
+                <h3>🔐 Update Credentials</h3>
+            </div>
+            <div class="admin-form">
+                <div class="admin-form-field">
+                    <label>Current Password (required)</label>
+                    <input type="password" id="adminCurrentPassword" placeholder="Enter current password">
+                </div>
+                <div class="admin-form-field">
+                    <label>New Username (optional)</label>
+                    <input type="text" id="adminNewUsername" placeholder="Leave blank to keep current">
+                </div>
+                <div class="admin-form-field">
+                    <label>New Password (optional)</label>
+                    <input type="password" id="adminNewPassword" placeholder="Leave blank to keep current">
+                </div>
+                <div class="admin-form-field">
+                    <label>Confirm New Password</label>
+                    <input type="password" id="adminConfirmPassword" placeholder="Confirm new password">
+                </div>
+                <button class="admin-form-btn" onclick="handleUpdateCredentials()">Update Credentials</button>
+                <div id="adminUpdateMessage"></div>
+            </div>
+        </div>
+        
+        <div class="admin-section">
+            <div class="admin-section-header">
+                <h3>ℹ️ Session Info</h3>
+            </div>
+            <div class="admin-form">
+                <div class="admin-form-field">
+                    <label>Session Duration</label>
+                    <div style="color: var(--text-primary);">24 hours</div>
+                </div>
+                <div class="admin-form-field">
+                    <label>Security Note</label>
+                    <div style="color: var(--text-secondary); font-size: 13px;">
+                        Your session will automatically expire after 24 hours of inactivity. 
+                        For security, always logout when using a shared computer.
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Handle credential update
+async function handleUpdateCredentials() {
+    const currentPassword = document.getElementById('adminCurrentPassword').value;
+    const newUsername = document.getElementById('adminNewUsername').value.trim();
+    const newPassword = document.getElementById('adminNewPassword').value;
+    const confirmPassword = document.getElementById('adminConfirmPassword').value;
+    const messageEl = document.getElementById('adminUpdateMessage');
+    
+    // Validation
+    if (!currentPassword) {
+        messageEl.className = 'admin-form-message error';
+        messageEl.textContent = 'Current password is required';
+        return;
+    }
+    
+    if (newPassword && newPassword !== confirmPassword) {
+        messageEl.className = 'admin-form-message error';
+        messageEl.textContent = 'New passwords do not match';
+        return;
+    }
+    
+    if (newPassword && newPassword.length < 4) {
+        messageEl.className = 'admin-form-message error';
+        messageEl.textContent = 'New password must be at least 4 characters';
+        return;
+    }
+    
+    if (!newUsername && !newPassword) {
+        messageEl.className = 'admin-form-message error';
+        messageEl.textContent = 'Please provide a new username or password to update';
+        return;
+    }
+    
+    try {
+        const body = { current_password: currentPassword };
+        if (newUsername) body.new_username = newUsername;
+        if (newPassword) body.new_password = newPassword;
+        
+        const response = await fetch(`${API_BASE}/api/v1/auth/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            messageEl.className = 'admin-form-message success';
+            messageEl.textContent = '✅ Credentials updated successfully!';
+            currentUsername = data.username;
+            
+            // Clear form
+            document.getElementById('adminCurrentPassword').value = '';
+            document.getElementById('adminNewUsername').value = '';
+            document.getElementById('adminNewPassword').value = '';
+            document.getElementById('adminConfirmPassword').value = '';
+            
+            // Refresh dashboard to show new username
+            setTimeout(() => renderAdminDashboard(), 1500);
+        } else {
+            messageEl.className = 'admin-form-message error';
+            messageEl.textContent = '❌ ' + (data.error || 'Update failed');
+        }
+    } catch (e) {
+        messageEl.className = 'admin-form-message error';
+        messageEl.textContent = '❌ Connection error: ' + e.message;
     }
 }

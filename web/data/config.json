@@ -1,0 +1,18 @@
+{
+  "pane_tickers": [
+    "binance:BTCUSDT",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "filters": {
+    "large_volume_only": true,
+    "market_type": "linear",
+    "selected_exchanges": []
+  }
+}

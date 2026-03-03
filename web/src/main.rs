@@ -48,6 +48,12 @@ async fn main() -> std::io::Result<()> {
         exchange::start_exchange_connections(state_clone).await;
     });
     
+    // Start background data persistence task (saves trades to files every 30 seconds)
+    let state_for_persistence = Arc::clone(&app_state);
+    tokio::spawn(async move {
+        api::start_background_persistence(state_for_persistence).await;
+    });
+    
     // Start HTTP server
     HttpServer::new(move || {
         App::new()
@@ -70,6 +76,13 @@ async fn main() -> std::io::Result<()> {
                     .route("/footprint/{exchange}/{symbol}", web::post().to(api::save_footprint))
                     // Backup trades from exchange REST API (for WebSocket gaps)
                     .route("/backup-trades/{exchange}/{symbol}", web::get().to(api::get_backup_trades))
+                    // Authentication endpoints
+                    .route("/auth/status", web::get().to(api::auth_status))
+                    .route("/auth/setup", web::post().to(api::auth_setup))
+                    .route("/auth/login", web::post().to(api::auth_login))
+                    .route("/auth/logout", web::post().to(api::auth_logout))
+                    .route("/auth/update", web::post().to(api::auth_update))
+                    .route("/auth/check", web::get().to(api::auth_check))
                     // API Key endpoints (for web app to display and regenerate)
                     .route("/api-key", web::get().to(api::get_api_key))
                     .route("/api-key/regenerate", web::post().to(api::regenerate_api_key))

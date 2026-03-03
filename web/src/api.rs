@@ -12,7 +12,133 @@ use parking_lot::Mutex;
 use crate::state::{AppState, ChartConfig};
 
 const FOOTPRINT_DATA_DIR: &str = "data/footprint";
+const TRADES_DATA_DIR: &str = "data/trades";
 const API_KEY_FILE: &str = "data/api_key.txt";
+const ADMIN_FILE: &str = "data/admin.json";
+const SESSION_DURATION_HOURS: u64 = 24;
+const PERSISTENCE_INTERVAL_SECS: u64 = 30;
+const DATA_RETENTION_DAYS: u64 = 7;
+
+// Admin credentials structure
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AdminCredentials {
+    pub username: String,
+    pub password_hash: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+// Session token structure
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SessionToken {
+    pub token: String,
+    pub username: String,
+    pub created_at: u64,
+    pub expires_at: u64,
+}
+
+// Active sessions storage
+static SESSIONS: Lazy<Mutex<Vec<SessionToken>>> = Lazy::new(|| {
+    Mutex::new(Vec::new())
+});
+
+/// Simple password hashing (SHA256)
+fn hash_password(password: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    password.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+/// Check if admin account exists
+fn admin_exists() -> bool {
+    if let Ok(contents) = fs::read_to_string(ADMIN_FILE) {
+        if let Ok(_) = serde_json::from_str::<AdminCredentials>(&contents) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Load admin credentials from file
+fn load_admin() -> Option<AdminCredentials> {
+    if let Ok(contents) = fs::read_to_string(ADMIN_FILE) {
+        if let Ok(admin) = serde_json::from_str::<AdminCredentials>(&contents) {
+            return Some(admin);
+        }
+    }
+    None
+}
+
+/// Save admin credentials to file
+fn save_admin(admin: &AdminCredentials) -> Result<(), std::io::Error> {
+    let _ = fs::create_dir_all("data");
+    let json = serde_json::to_string_pretty(admin).unwrap();
+    fs::write(ADMIN_FILE, json)
+}
+
+/// Generate a session token
+fn generate_session_token(username: &str) -> SessionToken {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let token = format!("sess_{}_{:x}", username, now);
+    
+    SessionToken {
+        token,
+        username: username.to_string(),
+        created_at: now,
+        expires_at: now + (SESSION_DURATION_HOURS * 3600),
+    }
+}
+
+/// Validate session token from request
+fn validate_session(req: &HttpRequest) -> bool {
+    // Check cookie first
+    if let Some(cookie) = req.cookie("session_token") {
+        let token = cookie.value();
+        return is_valid_session(token);
+    }
+    
+    // Check Authorization header
+    if let Some(auth_header) = req.headers().get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return is_valid_session(token);
+            }
+        }
+    }
+    
+    false
+}
+
+/// Check if a session token is valid
+fn is_valid_session(token: &str) -> bool {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let sessions = SESSIONS.lock();
+    sessions.iter().any(|s| s.token == token && s.expires_at > now)
+}
+
+/// Clean up expired sessions
+fn cleanup_expired_sessions() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let mut sessions = SESSIONS.lock();
+    sessions.retain(|s| s.expires_at > now);
+}
 
 // API Key for desktop client authentication (mutable for regeneration)
 static API_KEY: Lazy<Mutex<String>> = Lazy::new(|| {
@@ -331,13 +457,32 @@ pub async fn get_config(
 }
 
 /// POST /api/v1/config
+/// Saves admin's chart configuration and persists to disk
+/// This controls which tickers the server collects data for
 pub async fn save_config(
     state: web::Data<Arc<RwLock<AppState>>>,
     config: web::Json<ChartConfig>,
 ) -> Result<HttpResponse> {
-    let mut state = state.write();
-    state.config = config.into_inner();
-    Ok(HttpResponse::Ok().json(&state.config))
+    let config_data = config.into_inner();
+    
+    // Save to memory
+    {
+        let mut state = state.write();
+        state.config = config_data.clone();
+    }
+    
+    // Persist to disk so server can restore on restart
+    let config_path = "data/config.json";
+    let _ = fs::create_dir_all("data");
+    if let Ok(json) = serde_json::to_string_pretty(&config_data) {
+        if let Err(e) = fs::write(config_path, &json) {
+            log::error!("Failed to save config to disk: {}", e);
+        } else {
+            log::info!("📝 Admin config saved: {:?}", config_data.pane_tickers);
+        }
+    }
+    
+    Ok(HttpResponse::Ok().json(&config_data))
 }
 
 /// Footprint data structure for persistence
@@ -489,6 +634,272 @@ pub struct SyncQuery {
     pub limit: Option<usize>,
 }
 
+// ============================================================================
+// AUTHENTICATION API
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetupRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateCredentialsRequest {
+    pub current_password: String,
+    pub new_username: Option<String>,
+    pub new_password: Option<String>,
+}
+
+/// GET /api/v1/auth/status
+/// Check if admin account exists and if user is logged in
+pub async fn auth_status(req: HttpRequest) -> Result<HttpResponse> {
+    let admin_configured = admin_exists();
+    let is_authenticated = validate_session(&req);
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "admin_configured": admin_configured,
+        "is_authenticated": is_authenticated,
+        "session_duration_hours": SESSION_DURATION_HOURS
+    })))
+}
+
+/// POST /api/v1/auth/setup
+/// Initial admin account setup (only works if no admin exists)
+pub async fn auth_setup(body: web::Json<SetupRequest>) -> Result<HttpResponse> {
+    // Check if admin already exists
+    if admin_exists() {
+        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "Admin account already configured. Use login instead."
+        })));
+    }
+    
+    // Validate input
+    if body.username.trim().is_empty() || body.password.len() < 4 {
+        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "Username cannot be empty and password must be at least 4 characters"
+        })));
+    }
+    
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let admin = AdminCredentials {
+        username: body.username.trim().to_string(),
+        password_hash: hash_password(&body.password),
+        created_at: now,
+        updated_at: now,
+    };
+    
+    if let Err(e) = save_admin(&admin) {
+        log::error!("Failed to save admin credentials: {}", e);
+        return Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Failed to save admin credentials"
+        })));
+    }
+    
+    log::info!("Admin account created for user: {}", admin.username);
+    
+    // Auto-login after setup
+    let session = generate_session_token(&admin.username);
+    {
+        let mut sessions = SESSIONS.lock();
+        sessions.push(session.clone());
+    }
+    
+    Ok(HttpResponse::Ok()
+        .cookie(
+            actix_web::cookie::Cookie::build("session_token", &session.token)
+                .path("/")
+                .http_only(true)
+                .max_age(actix_web::cookie::time::Duration::hours(SESSION_DURATION_HOURS as i64))
+                .finish()
+        )
+        .json(serde_json::json!({
+            "success": true,
+            "message": "Admin account created successfully",
+            "username": admin.username,
+            "token": session.token
+        })))
+}
+
+/// POST /api/v1/auth/login
+/// Login with username and password
+pub async fn auth_login(body: web::Json<LoginRequest>) -> Result<HttpResponse> {
+    cleanup_expired_sessions();
+    
+    let admin = match load_admin() {
+        Some(a) => a,
+        None => {
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "No admin account configured. Please run setup first."
+            })));
+        }
+    };
+    
+    // Verify credentials
+    let password_hash = hash_password(&body.password);
+    if body.username != admin.username || password_hash != admin.password_hash {
+        log::warn!("Failed login attempt for user: {}", body.username);
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Invalid username or password"
+        })));
+    }
+    
+    // Create session
+    let session = generate_session_token(&admin.username);
+    {
+        let mut sessions = SESSIONS.lock();
+        sessions.push(session.clone());
+    }
+    
+    log::info!("User logged in: {}", admin.username);
+    
+    Ok(HttpResponse::Ok()
+        .cookie(
+            actix_web::cookie::Cookie::build("session_token", &session.token)
+                .path("/")
+                .http_only(true)
+                .max_age(actix_web::cookie::time::Duration::hours(SESSION_DURATION_HOURS as i64))
+                .finish()
+        )
+        .json(serde_json::json!({
+            "success": true,
+            "message": "Login successful",
+            "username": admin.username,
+            "token": session.token
+        })))
+}
+
+/// POST /api/v1/auth/logout
+/// Logout and invalidate session
+pub async fn auth_logout(req: HttpRequest) -> Result<HttpResponse> {
+    // Get token from cookie or header
+    let token = if let Some(cookie) = req.cookie("session_token") {
+        Some(cookie.value().to_string())
+    } else if let Some(auth_header) = req.headers().get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            auth_str.strip_prefix("Bearer ").map(|s| s.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
+    // Remove session
+    if let Some(token) = token {
+        let mut sessions = SESSIONS.lock();
+        sessions.retain(|s| s.token != token);
+    }
+    
+    Ok(HttpResponse::Ok()
+        .cookie(
+            actix_web::cookie::Cookie::build("session_token", "")
+                .path("/")
+                .http_only(true)
+                .max_age(actix_web::cookie::time::Duration::seconds(0))
+                .finish()
+        )
+        .json(serde_json::json!({
+            "success": true,
+            "message": "Logged out successfully"
+        })))
+}
+
+/// POST /api/v1/auth/update
+/// Update admin credentials (requires authentication)
+pub async fn auth_update(req: HttpRequest, body: web::Json<UpdateCredentialsRequest>) -> Result<HttpResponse> {
+    // Verify session
+    if !validate_session(&req) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Not authenticated"
+        })));
+    }
+    
+    let mut admin = match load_admin() {
+        Some(a) => a,
+        None => {
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "No admin account found"
+            })));
+        }
+    };
+    
+    // Verify current password
+    let current_hash = hash_password(&body.current_password);
+    if current_hash != admin.password_hash {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Current password is incorrect"
+        })));
+    }
+    
+    // Update username if provided
+    if let Some(ref new_username) = body.new_username {
+        if new_username.trim().is_empty() {
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Username cannot be empty"
+            })));
+        }
+        admin.username = new_username.trim().to_string();
+    }
+    
+    // Update password if provided
+    if let Some(ref new_password) = body.new_password {
+        if new_password.len() < 4 {
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Password must be at least 4 characters"
+            })));
+        }
+        admin.password_hash = hash_password(new_password);
+    }
+    
+    use std::time::{SystemTime, UNIX_EPOCH};
+    admin.updated_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    if let Err(e) = save_admin(&admin) {
+        log::error!("Failed to update admin credentials: {}", e);
+        return Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Failed to save credentials"
+        })));
+    }
+    
+    log::info!("Admin credentials updated for user: {}", admin.username);
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "message": "Credentials updated successfully",
+        "username": admin.username
+    })))
+}
+
+/// GET /api/v1/auth/check
+/// Check if current session is valid (for protected routes)
+pub async fn auth_check(req: HttpRequest) -> Result<HttpResponse> {
+    if !validate_session(&req) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "authenticated": false,
+            "error": "Not authenticated"
+        })));
+    }
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "authenticated": true
+    })))
+}
+
 /// GET /api/v1/api-key
 /// Get the API key for desktop client configuration (only accessible from web app)
 pub async fn get_api_key() -> Result<HttpResponse> {
@@ -608,11 +1019,25 @@ pub async fn sync_trades(
     
     log::info!("Sync trades request: {} since={} limit={}", key, since, limit);
     
-    // First, try to get trades from footprint data file (historical)
-    let file_path = format!("{}/{}_{}.json", FOOTPRINT_DATA_DIR, exchange.to_lowercase(), symbol.to_uppercase());
     let mut all_trades: Vec<serde_json::Value> = Vec::new();
     
-    if let Ok(contents) = fs::read_to_string(&file_path) {
+    // 1. First, try to get trades from server-side trades data file (background persistence)
+    let trades_file_path = format!("{}/{}_{}.json", TRADES_DATA_DIR, exchange.to_lowercase(), symbol.to_uppercase());
+    if let Ok(contents) = fs::read_to_string(&trades_file_path) {
+        if let Ok(data) = serde_json::from_str::<TradesFileData>(&contents) {
+            for trade in data.trades {
+                let ts = trade.get("timestamp").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(0);
+                if ts > since {
+                    all_trades.push(trade);
+                }
+            }
+            log::debug!("Loaded {} trades from server trades file", all_trades.len());
+        }
+    }
+    
+    // 2. Also try footprint data file (browser-saved data)
+    let footprint_file_path = format!("{}/{}_{}.json", FOOTPRINT_DATA_DIR, exchange.to_lowercase(), symbol.to_uppercase());
+    if let Ok(contents) = fs::read_to_string(&footprint_file_path) {
         if let Ok(data) = serde_json::from_str::<FootprintData>(&contents) {
             for trade in data.all_trades {
                 let ts = trade.get("timestamp").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(0);
@@ -623,7 +1048,7 @@ pub async fn sync_trades(
         }
     }
     
-    // Also add in-memory trades
+    // 3. Also add in-memory trades (most recent)
     {
         let state = state.read();
         if let Some(trades) = state.trades.get(&key) {
@@ -640,18 +1065,22 @@ pub async fn sync_trades(
         }
     }
     
-    // Sort by timestamp and deduplicate
+    // Sort by timestamp
     all_trades.sort_by(|a, b| {
         let ts_a = a.get("timestamp").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(0);
         let ts_b = b.get("timestamp").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(0);
         ts_a.cmp(&ts_b)
     });
     
-    // Deduplicate by timestamp
+    // Deduplicate by timestamp + price + quantity (to avoid losing trades at same ms)
     all_trades.dedup_by(|a, b| {
         let ts_a = a.get("timestamp").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(0);
         let ts_b = b.get("timestamp").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(0);
-        ts_a == ts_b
+        let price_a = a.get("price").and_then(|v: &serde_json::Value| v.as_f64()).unwrap_or(0.0);
+        let price_b = b.get("price").and_then(|v: &serde_json::Value| v.as_f64()).unwrap_or(0.0);
+        let qty_a = a.get("quantity").and_then(|v: &serde_json::Value| v.as_f64()).unwrap_or(0.0);
+        let qty_b = b.get("quantity").and_then(|v: &serde_json::Value| v.as_f64()).unwrap_or(0.0);
+        ts_a == ts_b && (price_a - price_b).abs() < 0.0000001 && (qty_a - qty_b).abs() < 0.0000001
     });
     
     // Limit results
@@ -797,6 +1226,152 @@ pub fn cleanup_old_footprint_data() {
                     if now - data.timestamp > retention_ms {
                         let _ = fs::remove_file(entry.path());
                         log::info!("Cleaned up old footprint data: {:?}", entry.path());
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// BACKGROUND DATA PERSISTENCE
+// ============================================================================
+
+/// Structure for persisting trades to files
+#[derive(Serialize, Deserialize)]
+struct TradesFileData {
+    exchange: String,
+    symbol: String,
+    last_updated: u64,
+    trades: Vec<serde_json::Value>,
+}
+
+/// Start background persistence task that saves trades to files continuously
+/// This ensures data is collected even when no browser is connected
+pub async fn start_background_persistence(state: Arc<RwLock<AppState>>) {
+    log::info!("📦 Starting background data persistence (every {}s, {}-day retention)", 
+        PERSISTENCE_INTERVAL_SECS, DATA_RETENTION_DAYS);
+    
+    // Create data directories
+    let _ = fs::create_dir_all(TRADES_DATA_DIR);
+    let _ = fs::create_dir_all(FOOTPRINT_DATA_DIR);
+    
+    let mut cleanup_counter = 0u64;
+    
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(PERSISTENCE_INTERVAL_SECS)).await;
+        
+        // Get all trades from state and save to files
+        let trades_to_save: Vec<(String, Vec<crate::state::Trade>)> = {
+            let state_guard = state.read();
+            state_guard.trades.iter()
+                .filter(|(_, trades)| !trades.is_empty())
+                .map(|(key, trades)| (key.clone(), trades.iter().cloned().collect()))
+                .collect()
+        };
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        
+        let mut saved_count = 0;
+        
+        for (key, trades) in trades_to_save {
+            if let Some((exchange, symbol)) = key.split_once(':') {
+                let file_path = format!("{}/{}_{}.json", TRADES_DATA_DIR, exchange, symbol);
+                
+                // Load existing trades from file
+                let mut all_trades: Vec<serde_json::Value> = if let Ok(contents) = fs::read_to_string(&file_path) {
+                    if let Ok(data) = serde_json::from_str::<TradesFileData>(&contents) {
+                        data.trades
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+                
+                // Add new trades
+                for trade in &trades {
+                    all_trades.push(serde_json::json!({
+                        "timestamp": trade.timestamp,
+                        "price": trade.price,
+                        "quantity": trade.quantity,
+                        "is_buyer_maker": trade.is_buyer_maker,
+                    }));
+                }
+                
+                // Sort by timestamp
+                all_trades.sort_by(|a, b| {
+                    let ts_a = a.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let ts_b = b.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                    ts_a.cmp(&ts_b)
+                });
+                
+                // Deduplicate by timestamp + price + quantity
+                all_trades.dedup_by(|a, b| {
+                    let ts_a = a.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let ts_b = b.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let price_a = a.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let price_b = b.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let qty_a = a.get("quantity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let qty_b = b.get("quantity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    ts_a == ts_b && (price_a - price_b).abs() < 0.0000001 && (qty_a - qty_b).abs() < 0.0000001
+                });
+                
+                // Apply 7-day retention - remove trades older than retention period
+                let retention_ms = DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+                let cutoff = now.saturating_sub(retention_ms);
+                all_trades.retain(|t| {
+                    t.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0) > cutoff
+                });
+                
+                // Save to file
+                let data = TradesFileData {
+                    exchange: exchange.to_string(),
+                    symbol: symbol.to_string(),
+                    last_updated: now,
+                    trades: all_trades,
+                };
+                
+                if let Ok(json) = serde_json::to_string(&data) {
+                    if fs::write(&file_path, json).is_ok() {
+                        saved_count += 1;
+                    }
+                }
+            }
+        }
+        
+        if saved_count > 0 {
+            log::info!("💾 Persisted trades for {} tickers to disk", saved_count);
+        }
+        
+        // Run cleanup every 10 cycles (5 minutes)
+        cleanup_counter += 1;
+        if cleanup_counter % 10 == 0 {
+            cleanup_old_trades_data();
+            cleanup_old_footprint_data();
+        }
+    }
+}
+
+/// Cleanup old trades data files (7-day retention)
+fn cleanup_old_trades_data() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let retention_ms = DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    
+    if let Ok(entries) = fs::read_dir(TRADES_DATA_DIR) {
+        for entry in entries.flatten() {
+            if let Ok(contents) = fs::read_to_string(entry.path()) {
+                if let Ok(data) = serde_json::from_str::<TradesFileData>(&contents) {
+                    // If file hasn't been updated in retention period, delete it
+                    if now - data.last_updated > retention_ms {
+                        let _ = fs::remove_file(entry.path());
+                        log::info!("🗑️ Cleaned up old trades data: {:?}", entry.path());
                     }
                 }
             }

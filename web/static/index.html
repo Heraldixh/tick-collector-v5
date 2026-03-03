@@ -87,6 +87,7 @@
                 <button class="main-tab active" data-tab="charts">📊 Charts</button>
                 <button class="main-tab" data-tab="health">💚 Health</button>
                 <button class="main-tab" data-tab="api">🔌 API</button>
+                <button class="main-tab" data-tab="admin">👤 Admin</button>
             </div>
             
             <!-- Charts View -->
@@ -275,7 +276,67 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Admin View -->
+            <div class="tab-content" id="adminView">
+                <div class="admin-dashboard">
+                    <div id="adminContent">
+                        <div class="admin-loading">Loading admin settings...</div>
+                    </div>
+                </div>
+            </div>
         </main>
+    </div>
+    
+    <!-- Login Modal -->
+    <div class="auth-overlay" id="authOverlay">
+        <div class="auth-modal" id="authModal">
+            <!-- Setup Form (first time) -->
+            <div class="auth-form" id="setupForm" style="display: none;">
+                <div class="auth-header">
+                    <div class="auth-icon">🔐</div>
+                    <h2>Welcome to Tick Collector</h2>
+                    <p>Create your admin account to get started</p>
+                </div>
+                <div class="auth-body">
+                    <div class="auth-field">
+                        <label>Username</label>
+                        <input type="text" id="setupUsername" placeholder="Enter username" autocomplete="username">
+                    </div>
+                    <div class="auth-field">
+                        <label>Password</label>
+                        <input type="password" id="setupPassword" placeholder="Enter password (min 4 chars)" autocomplete="new-password">
+                    </div>
+                    <div class="auth-field">
+                        <label>Confirm Password</label>
+                        <input type="password" id="setupConfirmPassword" placeholder="Confirm password" autocomplete="new-password">
+                    </div>
+                    <div class="auth-error" id="setupError"></div>
+                    <button class="auth-btn" onclick="handleSetup()">Create Admin Account</button>
+                </div>
+            </div>
+            
+            <!-- Login Form -->
+            <div class="auth-form" id="loginForm" style="display: none;">
+                <div class="auth-header">
+                    <div class="auth-icon">🔒</div>
+                    <h2>Tick Collector</h2>
+                    <p>Login to access the dashboard</p>
+                </div>
+                <div class="auth-body">
+                    <div class="auth-field">
+                        <label>Username</label>
+                        <input type="text" id="loginUsername" placeholder="Enter username" autocomplete="username">
+                    </div>
+                    <div class="auth-field">
+                        <label>Password</label>
+                        <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password">
+                    </div>
+                    <div class="auth-error" id="loginError"></div>
+                    <button class="auth-btn" onclick="handleLogin()">Login</button>
+                </div>
+            </div>
+        </div>
     </div>
     
     <!-- Tick Count Modal (matching desktop) -->

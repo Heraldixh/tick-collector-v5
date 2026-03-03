@@ -302,6 +302,7 @@ use parking_lot::Mutex;
 static ACTIVE_STREAMS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 /// Start a single stream for a specific ticker (called when client connects)
+/// This stream will auto-reconnect on disconnect to ensure continuous data
 pub async fn start_single_stream(
     state: Arc<RwLock<AppState>>,
     exchange: &str,
@@ -318,37 +319,70 @@ pub async fn start_single_stream(
         active.insert(key.to_string());
     }
     
-    log::info!("Starting on-demand stream: {}", key);
+    log::info!("Starting on-demand stream with auto-reconnect: {}", key);
     
-    let result = match exchange {
-        "binance" => connect_binance_stream(key, symbol, &state).await,
-        "bybit" => connect_bybit_stream(key, symbol, &state).await,
-        "okx" => connect_okx_stream(key, symbol, &state).await,
-        "hyperliquid" => connect_hyperliquid_stream(key, symbol, &state).await,
-        _ => {
-            log::error!("Unknown exchange: {}", exchange);
-            return;
+    let exchange_owned = exchange.to_string();
+    let symbol_owned = symbol.to_string();
+    let key_owned = key.to_string();
+    
+    // Auto-reconnect loop - keeps stream alive as long as there are subscribers
+    loop {
+        let result = match exchange_owned.as_str() {
+            "binance" => connect_binance_stream(&key_owned, &symbol_owned, &state).await,
+            "bybit" => connect_bybit_stream(&key_owned, &symbol_owned, &state).await,
+            "okx" => connect_okx_stream(&key_owned, &symbol_owned, &state).await,
+            "hyperliquid" => connect_hyperliquid_stream(&key_owned, &symbol_owned, &state).await,
+            _ => {
+                log::error!("Unknown exchange: {}", exchange_owned);
+                break;
+            }
+        };
+        
+        match result {
+            Ok(_) => {
+                log::warn!("On-demand stream {} ended normally, reconnecting...", key_owned);
+            }
+            Err(e) => {
+                log::error!("On-demand stream {} error: {}, reconnecting in 3s...", key_owned, e);
+            }
         }
-    };
-    
-    if let Err(e) = result {
-        log::error!("Stream error for {}: {}", key, e);
+        
+        // Check if there are still subscribers before reconnecting
+        let has_subscribers = {
+            let state_guard = state.read();
+            state_guard.subscribers.get(&key_owned)
+                .map(|subs| !subs.is_empty())
+                .unwrap_or(false)
+        };
+        
+        if !has_subscribers {
+            log::info!("No more subscribers for {}, stopping stream", key_owned);
+            break;
+        }
+        
+        // Wait before reconnecting
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     }
     
     // Remove from active streams when done
     {
         let mut active = ACTIVE_STREAMS.lock();
-        active.remove(key);
+        active.remove(&key_owned);
     }
+    
+    log::info!("On-demand stream {} fully stopped", key);
 }
 
 /// Start WebSocket connections to exchanges
+/// NOTE: This only fetches ticker info for the sidebar list.
+/// Actual data collection ONLY happens for admin-selected active tickers
+/// when the admin assigns them to chart panes via the browser.
 pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
-    // Fetch all tickers from all exchanges
-    log::info!("Fetching tickers from all exchanges...");
+    // Fetch all tickers from all exchanges (for sidebar list only)
+    log::info!("Fetching tickers from all exchanges (for sidebar list)...");
     let all_tickers = fetch_all_tickers().await;
     
-    // Initialize ticker info in state
+    // Initialize ticker info in state (metadata only, no data collection)
     {
         let mut state = state.write();
         for (key, _symbol, info) in &all_tickers {
@@ -356,56 +390,36 @@ pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
         }
     }
     
-    // Connect to top tickers by default (limit for f1-micro memory)
-    // Priority: BTC, ETH, SOL, XRP, DOGE from each exchange
-    let priority_bases = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "MATIC", "DOT"];
+    log::info!("📋 Loaded {} tickers for sidebar. Data collection will start when admin assigns tickers to chart panes.", all_tickers.len());
     
-    let mut streams_to_connect = Vec::new();
-    
-    for (key, symbol, info) in &all_tickers {
-        let base = &info.base_asset;
-        if priority_bases.contains(&base.as_str()) {
-            streams_to_connect.push((info.exchange.clone(), symbol.clone(), key.clone()));
+    // Load saved config and start streams for previously active tickers
+    let config_path = "data/config.json";
+    if let Ok(contents) = std::fs::read_to_string(config_path) {
+        if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
+            let mut active_count = 0;
+            for ticker_opt in &config.pane_tickers {
+                if let Some(ticker_key) = ticker_opt {
+                    if let Some((exchange, symbol)) = ticker_key.split_once(':') {
+                        let state_clone = Arc::clone(&state);
+                        let key = ticker_key.clone();
+                        let exchange_owned = exchange.to_string();
+                        let symbol_owned = symbol.to_string();
+                        
+                        tokio::spawn(async move {
+                            start_single_stream(state_clone, &exchange_owned, &symbol_owned, &key).await;
+                        });
+                        active_count += 1;
+                    }
+                }
+            }
+            if active_count > 0 {
+                log::info!("🚀 Started {} streams for previously active tickers from saved config", active_count);
+            }
         }
     }
     
-    // Limit to 20 streams for f1-micro (memory constraint)
-    streams_to_connect.truncate(20);
-    
-    log::info!("Starting {} WebSocket streams...", streams_to_connect.len());
-    
-    // Spawn connection tasks
-    for (exchange, symbol, key) in streams_to_connect {
-        let state_clone = Arc::clone(&state);
-        
-        tokio::spawn(async move {
-            loop {
-                log::info!("Connecting to {}:{} stream...", exchange, symbol);
-                
-                let result = match exchange.as_str() {
-                    "binance" => connect_binance_stream(&key, &symbol, &state_clone).await,
-                    "bybit" => connect_bybit_stream(&key, &symbol, &state_clone).await,
-                    "okx" => connect_okx_stream(&key, &symbol, &state_clone).await,
-                    "hyperliquid" => connect_hyperliquid_stream(&key, &symbol, &state_clone).await,
-                    _ => {
-                        log::error!("Unknown exchange: {}", exchange);
-                        return;
-                    }
-                };
-                
-                match result {
-                    Ok(_) => {
-                        log::warn!("{}:{} stream ended, reconnecting...", exchange, symbol);
-                    }
-                    Err(e) => {
-                        log::error!("{}:{} stream error: {}, reconnecting in 5s...", exchange, symbol, e);
-                    }
-                }
-                
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            }
-        });
-    }
+    // NO automatic priority ticker connections - only admin-selected tickers
+    log::info!("✅ Server ready. Data collection only for admin-assigned chart panes.");
 }
 
 async fn connect_binance_stream(

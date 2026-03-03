@@ -108,18 +108,20 @@ impl AppState {
             ticker.price = trade.price;
         }
         
-        // Broadcast to WebSocket subscribers
-        if let Some(subs) = self.subscribers.get(key) {
+        // Broadcast to WebSocket subscribers and clean up dead ones
+        if let Some(subs) = self.subscribers.get_mut(key) {
             let msg = serde_json::to_string(&trade).unwrap_or_default();
-            let sub_count = subs.len();
-            let mut sent = 0;
-            for tx in subs {
-                if tx.send(msg.clone()).is_ok() {
-                    sent += 1;
-                }
-            }
+            let initial_count = subs.len();
+            
+            // Remove dead subscribers (those that fail to send)
+            subs.retain(|tx| tx.send(msg.clone()).is_ok());
+            
+            let sent = subs.len();
             if sent > 0 {
-                log::debug!("Broadcast trade to {}/{} subscribers for {}", sent, sub_count, key);
+                log::debug!("Broadcast trade to {} subscribers for {}", sent, key);
+            }
+            if initial_count != sent {
+                log::info!("Cleaned up {} dead subscribers for {}", initial_count - sent, key);
             }
         }
     }
