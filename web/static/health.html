@@ -290,6 +290,138 @@
             background: #26a69a;
             animation: pulse 2s infinite;
         }
+        
+        /* Storage action buttons */
+        .storage-actions {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #333;
+        }
+        
+        .btn {
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        
+        .btn-danger {
+            background: #ef5350;
+            color: white;
+            padding: 8px 16px;
+        }
+        
+        .btn-danger:hover {
+            background: #f44336;
+        }
+        
+        .btn-secondary {
+            background: #424242;
+            color: white;
+            padding: 8px 16px;
+        }
+        
+        .btn-secondary:hover {
+            background: #616161;
+        }
+        
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        
+        .btn-xs {
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+        
+        /* Confirmation dialog */
+        .confirm-dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .confirm-dialog {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 450px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        
+        .confirm-dialog h3 {
+            color: #ef5350;
+            margin-bottom: 16px;
+            font-size: 18px;
+        }
+        
+        .confirm-dialog p {
+            color: #b0b0b0;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+        
+        .confirm-dialog-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+        
+        /* Notification */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 1001;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .notification.success {
+            background: #26a69a;
+            color: white;
+        }
+        
+        .notification.error {
+            background: #ef5350;
+            color: white;
+        }
+        
+        .notification.info {
+            background: #42a5f5;
+            color: white;
+        }
+        
+        .notification.fade-out {
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
     </style>
 </head>
 <body>
@@ -355,6 +487,105 @@
             return price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
         }
         
+        // Confirmation dialog for clearing all storage
+        function confirmClearAllStorage() {
+            showConfirmDialog(
+                '🗑️ Clear All Storage',
+                'Are you sure you want to delete ALL storage data? This will remove all footprint and trades files. This action cannot be undone.',
+                async () => {
+                    try {
+                        const response = await fetch('/api/v1/storage/clear-all', {
+                            method: 'DELETE',
+                            credentials: 'include'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            showNotification(`✅ Cleared ${result.deleted_footprint_files} footprint files and ${result.deleted_trades_files} trades files`, 'success');
+                            loadHealthData(); // Refresh the dashboard
+                        } else {
+                            showNotification('❌ Failed to clear storage: ' + (result.error || 'Unknown error'), 'error');
+                        }
+                    } catch (e) {
+                        showNotification('❌ Error: ' + e.message, 'error');
+                    }
+                }
+            );
+        }
+        
+        // Confirmation dialog for clearing specific ticker storage
+        function confirmClearTickerStorage(exchange, symbol) {
+            showConfirmDialog(
+                `🗑️ Clear ${exchange}:${symbol}`,
+                `Are you sure you want to delete all storage data for ${exchange}:${symbol}? This will remove footprint and trades files for this ticker. This action cannot be undone.`,
+                async () => {
+                    try {
+                        const response = await fetch(`/api/v1/storage/clear/${exchange}/${symbol}`, {
+                            method: 'DELETE',
+                            credentials: 'include'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            showNotification(`✅ Cleared storage for ${result.ticker}`, 'success');
+                            loadHealthData(); // Refresh the dashboard
+                        } else {
+                            showNotification('❌ Failed to clear storage: ' + (result.error || 'Unknown error'), 'error');
+                        }
+                    } catch (e) {
+                        showNotification('❌ Error: ' + e.message, 'error');
+                    }
+                }
+            );
+        }
+        
+        // Show confirmation dialog
+        function showConfirmDialog(title, message, onConfirm) {
+            // Remove existing dialog if any
+            const existing = document.getElementById('confirm-dialog');
+            if (existing) existing.remove();
+            
+            const dialog = document.createElement('div');
+            dialog.id = 'confirm-dialog';
+            dialog.className = 'confirm-dialog-overlay';
+            dialog.innerHTML = `
+                <div class="confirm-dialog">
+                    <h3>${title}</h3>
+                    <p>${message}</p>
+                    <div class="confirm-dialog-buttons">
+                        <button class="btn btn-secondary" onclick="closeConfirmDialog()">No, Cancel</button>
+                        <button class="btn btn-danger" id="confirm-yes-btn">Yes, Delete</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(dialog);
+            
+            document.getElementById('confirm-yes-btn').onclick = () => {
+                closeConfirmDialog();
+                onConfirm();
+            };
+        }
+        
+        function closeConfirmDialog() {
+            const dialog = document.getElementById('confirm-dialog');
+            if (dialog) dialog.remove();
+        }
+        
+        // Show notification
+        function showNotification(message, type = 'info') {
+            const existing = document.getElementById('notification');
+            if (existing) existing.remove();
+            
+            const notification = document.createElement('div');
+            notification.id = 'notification';
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.classList.add('fade-out');
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
+        }
+        
         function renderHealthDashboard(data) {
             const isHealthy = data.status === 'ok';
             const activeSubscribers = data.active_tickers.filter(t => t.subscribers > 0);
@@ -409,6 +640,11 @@
                                 <span class="value">${data.storage.newest_file_age_hours.toFixed(1)}h ago</span>
                             </div>
                         </div>
+                        <div class="storage-actions">
+                            <button class="btn btn-danger btn-sm" onclick="confirmClearAllStorage()">
+                                🗑️ Clear All Storage
+                            </button>
+                        </div>
                     </div>
                     
                     <div class="stat-card">
@@ -457,6 +693,7 @@
                                 <th>Price</th>
                                 <th>Trades</th>
                                 <th>Subscribers</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -470,6 +707,11 @@
                                         <span class="subscriber-badge ${ticker.subscribers === 0 ? 'inactive' : ''}">
                                             ${ticker.subscribers > 0 ? '●' : '○'} ${ticker.subscribers}
                                         </span>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-danger btn-xs" onclick="confirmClearTickerStorage('${ticker.exchange}', '${ticker.symbol}')" title="Clear storage for this ticker">
+                                            🗑️
+                                        </button>
                                     </td>
                                 </tr>
                             `).join('')}

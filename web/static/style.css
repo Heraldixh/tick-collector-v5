@@ -1470,3 +1470,162 @@ body {
         display: none;
     }
 }
+
+/* ============================================================================
+   STORAGE MANAGEMENT STYLES
+   ============================================================================ */
+
+.health-storage-actions {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.btn-danger-sm {
+    background: #ef5350;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-danger-sm:hover {
+    background: #f44336;
+}
+
+.btn-danger-xs {
+    background: #ef5350;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-danger-xs:hover {
+    background: #f44336;
+}
+
+.btn-danger {
+    background: #ef5350;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-danger:hover {
+    background: #f44336;
+}
+
+.btn-secondary {
+    background: #424242;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: #616161;
+}
+
+/* Confirmation Dialog */
+.storage-confirm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.storage-confirm-dialog {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 450px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.storage-confirm-dialog h3 {
+    color: #ef5350;
+    margin-bottom: 16px;
+    font-size: 18px;
+}
+
+.storage-confirm-dialog p {
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+.storage-confirm-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+/* Notification */
+.storage-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 16px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 10001;
+    animation: slideInRight 0.3s ease;
+}
+
+.storage-notification.success {
+    background: #26a69a;
+    color: white;
+}
+
+.storage-notification.error {
+    background: #ef5350;
+    color: white;
+}
+
+.storage-notification.info {
+    background: #42a5f5;
+    color: white;
+}
+
+.storage-notification.fade-out {
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}

@@ -1,0 +1,40 @@
+[Unit]
+Description=Tick Collector Web Server
+Documentation=https://github.com/tick-collector
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tick-collector
+Group=tick-collector
+WorkingDirectory=/opt/tick-collector
+ExecStart=/opt/tick-collector/tick-collector-web
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Environment
+Environment=RUST_LOG=info
+Environment=RUST_BACKTRACE=1
+
+# Resource limits for f1-micro (0.6GB RAM)
+MemoryMax=500M
+MemoryHigh=400M
+CPUQuota=100%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tick-collector/data
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tick-collector
+
+[Install]
+WantedBy=multi-user.target

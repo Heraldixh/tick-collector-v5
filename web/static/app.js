@@ -2179,6 +2179,9 @@ function renderHealthDashboard(data) {
                         <span class="value">${data.storage.newest_file_age_hours.toFixed(1)}h ago</span>
                     </div>
                 </div>
+                <div class="health-storage-actions">
+                    <button class="btn-danger-sm" onclick="confirmClearAllStorage()">🗑️ Clear All Storage</button>
+                </div>
             </div>
             
             <div class="health-stat-card">
@@ -2227,6 +2230,7 @@ function renderHealthDashboard(data) {
                         <th>Price</th>
                         <th>Trades</th>
                         <th>Subscribers</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2241,12 +2245,131 @@ function renderHealthDashboard(data) {
                                     ${ticker.subscribers > 0 ? '●' : '○'} ${ticker.subscribers}
                                 </span>
                             </td>
+                            <td>
+                                <button class="btn-danger-xs" onclick="confirmClearTickerStorage('${ticker.exchange}', '${ticker.symbol}')" title="Clear storage for this ticker">🗑️</button>
+                            </td>
                         </tr>
                     `).join('')}
                 </tbody>
             </table>
         </div>
     `;
+}
+
+// ============================================================================
+// STORAGE MANAGEMENT FUNCTIONS
+// ============================================================================
+
+// Refresh health dashboard by fetching fresh data
+async function refreshHealthDashboard() {
+    try {
+        const response = await fetch(`${API_BASE}/api/v1/health/detailed`);
+        if (response.ok) {
+            const data = await response.json();
+            renderHealthDashboard(data);
+        }
+    } catch (e) {
+        console.error('Failed to refresh health dashboard:', e);
+    }
+}
+
+// Confirmation dialog for clearing all storage
+function confirmClearAllStorage() {
+    showStorageConfirmDialog(
+        '🗑️ Clear All Storage',
+        'Are you sure you want to delete ALL storage data? This will remove all footprint and trades files. This action cannot be undone.',
+        async () => {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/storage/clear-all`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showStorageNotification(`✅ Cleared ${result.deleted_footprint_files} footprint files and ${result.deleted_trades_files} trades files`, 'success');
+                    refreshHealthDashboard(); // Refresh the dashboard
+                } else {
+                    showStorageNotification('❌ Failed to clear storage: ' + (result.error || 'Unknown error'), 'error');
+                }
+            } catch (e) {
+                showStorageNotification('❌ Error: ' + e.message, 'error');
+            }
+        }
+    );
+}
+
+// Confirmation dialog for clearing specific ticker storage
+function confirmClearTickerStorage(exchange, symbol) {
+    showStorageConfirmDialog(
+        `🗑️ Clear ${exchange}:${symbol}`,
+        `Are you sure you want to delete all storage data for ${exchange}:${symbol}? This will remove footprint and trades files for this ticker. This action cannot be undone.`,
+        async () => {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/storage/clear/${exchange}/${symbol}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showStorageNotification(`✅ Cleared storage for ${result.ticker}`, 'success');
+                    refreshHealthDashboard(); // Refresh the dashboard
+                } else {
+                    showStorageNotification('❌ Failed to clear storage: ' + (result.error || 'Unknown error'), 'error');
+                }
+            } catch (e) {
+                showStorageNotification('❌ Error: ' + e.message, 'error');
+            }
+        }
+    );
+}
+
+// Show confirmation dialog
+function showStorageConfirmDialog(title, message, onConfirm) {
+    // Remove existing dialog if any
+    const existing = document.getElementById('storage-confirm-dialog');
+    if (existing) existing.remove();
+    
+    const dialog = document.createElement('div');
+    dialog.id = 'storage-confirm-dialog';
+    dialog.className = 'storage-confirm-overlay';
+    dialog.innerHTML = `
+        <div class="storage-confirm-dialog">
+            <h3>${title}</h3>
+            <p>${message}</p>
+            <div class="storage-confirm-buttons">
+                <button class="btn-secondary" onclick="closeStorageConfirmDialog()">No, Cancel</button>
+                <button class="btn-danger" id="storage-confirm-yes-btn">Yes, Delete</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+    
+    document.getElementById('storage-confirm-yes-btn').onclick = () => {
+        closeStorageConfirmDialog();
+        onConfirm();
+    };
+}
+
+function closeStorageConfirmDialog() {
+    const dialog = document.getElementById('storage-confirm-dialog');
+    if (dialog) dialog.remove();
+}
+
+// Show notification
+function showStorageNotification(message, type = 'info') {
+    const existing = document.getElementById('storage-notification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.id = 'storage-notification';
+    notification.className = `storage-notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
 }
 
 // ============================================================================

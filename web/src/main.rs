@@ -8,6 +8,9 @@
 //! - WebSocket streaming for real-time ticks
 //! - Static file serving for HTML/JS frontend
 //! - Multi-chart support (up to 9 charts)
+//! - Background data persistence with 7-day retention
+//! - Admin authentication for browser access
+//! - API key authentication for desktop clients
 
 use actix_web::{web, App, HttpServer, middleware};
 use actix_files::Files;
@@ -22,18 +25,32 @@ mod state;
 
 use state::AppState;
 
+const VERSION: &str = "1.0.0";
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize logging
-    setup_logging().expect("Failed to setup logging");
+    if let Err(e) = setup_logging() {
+        eprintln!("Failed to setup logging: {}", e);
+        std::process::exit(1);
+    }
     
     // Initialize start time for uptime tracking
     api::init_start_time();
     
-    log::info!("🚀 Tick Collector Web v0.1.0 starting...");
-    log::info!("📊 Dashboard: http://localhost:8080");
-    log::info!("🔧 API: http://localhost:8080/api/v1");
-    log::info!("💚 Health: http://localhost:8080/health.html");
+    // Create data directories
+    std::fs::create_dir_all("data/trades").ok();
+    std::fs::create_dir_all("data/footprint").ok();
+    
+    log::info!("═══════════════════════════════════════════════════════════");
+    log::info!("🚀 Tick Collector Web v{} - Production Server", VERSION);
+    log::info!("═══════════════════════════════════════════════════════════");
+    log::info!("📊 Dashboard: http://0.0.0.0:8080");
+    log::info!("🔧 API: http://0.0.0.0:8080/api/v1");
+    log::info!("💚 Health: http://0.0.0.0:8080/api/v1/health");
+    log::info!("📦 Data retention: 7 days");
+    log::info!("💾 Persistence interval: 30 seconds");
+    log::info!("═══════════════════════════════════════════════════════════");
     
     // Get static files path
     let static_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "static"].iter().collect();
@@ -91,6 +108,10 @@ async fn main() -> std::io::Result<()> {
                     .route("/sync/{exchange}/{symbol}/latest", web::get().to(api::sync_latest))
                     .route("/sync/{exchange}/{symbol}/trades", web::get().to(api::sync_trades))
                     .route("/sync/{exchange}/{symbol}/bars", web::get().to(api::sync_bars))
+                    // Storage management (admin only)
+                    .route("/storage/list", web::get().to(api::list_storage))
+                    .route("/storage/clear-all", web::delete().to(api::clear_all_storage))
+                    .route("/storage/clear/{exchange}/{symbol}", web::delete().to(api::clear_ticker_storage))
             )
             // WebSocket for live data
             .route("/ws/live/{exchange}/{symbol}", web::get().to(websocket::ws_handler))
@@ -99,11 +120,24 @@ async fn main() -> std::io::Result<()> {
     })
     .bind("0.0.0.0:8080")?
     .workers(1) // Single worker for f1-micro (0.6GB RAM)
+    .shutdown_timeout(30) // 30 second graceful shutdown
+    .keep_alive(std::time::Duration::from_secs(75)) // Keep-alive for WebSocket connections
+    .client_request_timeout(std::time::Duration::from_secs(60))
     .run()
     .await
 }
 
 fn setup_logging() -> Result<(), fern::InitError> {
+    // Reduce log verbosity for production
+    let log_level = std::env::var("RUST_LOG")
+        .map(|l| match l.to_lowercase().as_str() {
+            "debug" => log::LevelFilter::Debug,
+            "warn" => log::LevelFilter::Warn,
+            "error" => log::LevelFilter::Error,
+            _ => log::LevelFilter::Info,
+        })
+        .unwrap_or(log::LevelFilter::Info);
+    
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -113,7 +147,14 @@ fn setup_logging() -> Result<(), fern::InitError> {
                 message
             ))
         })
-        .level(log::LevelFilter::Info)
+        .level(log_level)
+        // Reduce noise from dependencies
+        .level_for("actix_web", log::LevelFilter::Warn)
+        .level_for("actix_http", log::LevelFilter::Warn)
+        .level_for("actix_server", log::LevelFilter::Warn)
+        .level_for("mio", log::LevelFilter::Warn)
+        .level_for("tokio_tungstenite", log::LevelFilter::Warn)
+        .level_for("tungstenite", log::LevelFilter::Warn)
         .chain(std::io::stdout())
         .apply()?;
     

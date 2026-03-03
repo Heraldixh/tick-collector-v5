@@ -270,6 +270,7 @@ pub fn init_start_time() {
 }
 
 /// GET /api/v1/health
+/// Simple health check for load balancers and monitoring
 pub async fn health() -> Result<HttpResponse> {
     let uptime = START_TIME.get()
         .map(|t| t.elapsed().as_secs())
@@ -277,7 +278,7 @@ pub async fn health() -> Result<HttpResponse> {
     
     let response = HealthResponse {
         status: "ok",
-        version: "0.1.0",
+        version: "1.0.0",
         uptime_seconds: uptime,
     };
     Ok(HttpResponse::Ok().json(response))
@@ -405,6 +406,186 @@ fn get_storage_stats() -> StorageStats {
         oldest_file_age_hours: oldest_age_hours,
         newest_file_age_hours: newest_age_hours,
     }
+}
+
+/// DELETE /api/v1/storage/clear-all
+/// Clears all storage data (footprint and trades files)
+/// Requires admin session authentication
+pub async fn clear_all_storage(
+    req: HttpRequest,
+    state: web::Data<Arc<RwLock<AppState>>>,
+) -> Result<HttpResponse> {
+    // Validate admin session
+    if !validate_session(&req) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Admin authentication required"
+        })));
+    }
+    
+    let mut deleted_footprint = 0;
+    let mut deleted_trades = 0;
+    let mut errors: Vec<String> = Vec::new();
+    
+    // Clear footprint files
+    if let Ok(entries) = fs::read_dir(FOOTPRINT_DATA_DIR) {
+        for entry in entries.flatten() {
+            if let Err(e) = fs::remove_file(entry.path()) {
+                errors.push(format!("Failed to delete {:?}: {}", entry.path(), e));
+            } else {
+                deleted_footprint += 1;
+            }
+        }
+    }
+    
+    // Clear trades files
+    if let Ok(entries) = fs::read_dir(TRADES_DATA_DIR) {
+        for entry in entries.flatten() {
+            if let Err(e) = fs::remove_file(entry.path()) {
+                errors.push(format!("Failed to delete {:?}: {}", entry.path(), e));
+            } else {
+                deleted_trades += 1;
+            }
+        }
+    }
+    
+    // Clear in-memory trades
+    {
+        let mut state = state.write();
+        state.trades.clear();
+    }
+    
+    log::info!("🗑️ Storage cleared: {} footprint files, {} trades files deleted", deleted_footprint, deleted_trades);
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "deleted_footprint_files": deleted_footprint,
+        "deleted_trades_files": deleted_trades,
+        "errors": errors,
+    })))
+}
+
+/// DELETE /api/v1/storage/clear/{exchange}/{symbol}
+/// Clears storage data for a specific ticker
+/// Requires admin session authentication
+pub async fn clear_ticker_storage(
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
+    state: web::Data<Arc<RwLock<AppState>>>,
+) -> Result<HttpResponse> {
+    // Validate admin session
+    if !validate_session(&req) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Admin authentication required"
+        })));
+    }
+    
+    let (exchange, symbol) = path.into_inner();
+    let key = format!("{}:{}", exchange.to_lowercase(), symbol.to_uppercase());
+    let file_prefix = format!("{}_{}", exchange.to_lowercase(), symbol.to_uppercase());
+    
+    let mut deleted_footprint = false;
+    let mut deleted_trades = false;
+    let mut errors: Vec<String> = Vec::new();
+    
+    // Delete footprint file
+    let footprint_path = format!("{}/{}.json", FOOTPRINT_DATA_DIR, file_prefix);
+    if Path::new(&footprint_path).exists() {
+        if let Err(e) = fs::remove_file(&footprint_path) {
+            errors.push(format!("Failed to delete footprint: {}", e));
+        } else {
+            deleted_footprint = true;
+        }
+    }
+    
+    // Delete trades file
+    let trades_path = format!("{}/{}.json", TRADES_DATA_DIR, file_prefix);
+    if Path::new(&trades_path).exists() {
+        if let Err(e) = fs::remove_file(&trades_path) {
+            errors.push(format!("Failed to delete trades: {}", e));
+        } else {
+            deleted_trades = true;
+        }
+    }
+    
+    // Clear in-memory trades for this ticker
+    {
+        let mut state = state.write();
+        state.trades.remove(&key);
+    }
+    
+    log::info!("🗑️ Storage cleared for {}: footprint={}, trades={}", key, deleted_footprint, deleted_trades);
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "ticker": key,
+        "deleted_footprint": deleted_footprint,
+        "deleted_trades": deleted_trades,
+        "errors": errors,
+    })))
+}
+
+/// GET /api/v1/storage/list
+/// Lists all storage files with their sizes
+/// Requires admin session authentication
+pub async fn list_storage(
+    req: HttpRequest,
+) -> Result<HttpResponse> {
+    // Validate admin session
+    if !validate_session(&req) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Admin authentication required"
+        })));
+    }
+    
+    let mut files: Vec<serde_json::Value> = Vec::new();
+    
+    // List footprint files
+    if let Ok(entries) = fs::read_dir(FOOTPRINT_DATA_DIR) {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                let filename = entry.file_name().to_string_lossy().to_string();
+                // Extract exchange and symbol from filename (e.g., "binance_BTCUSDT.json")
+                if let Some(name) = filename.strip_suffix(".json") {
+                    let parts: Vec<&str> = name.splitn(2, '_').collect();
+                    if parts.len() == 2 {
+                        files.push(serde_json::json!({
+                            "type": "footprint",
+                            "exchange": parts[0],
+                            "symbol": parts[1],
+                            "key": format!("{}:{}", parts[0], parts[1]),
+                            "size_bytes": metadata.len(),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    
+    // List trades files
+    if let Ok(entries) = fs::read_dir(TRADES_DATA_DIR) {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                let filename = entry.file_name().to_string_lossy().to_string();
+                if let Some(name) = filename.strip_suffix(".json") {
+                    let parts: Vec<&str> = name.splitn(2, '_').collect();
+                    if parts.len() == 2 {
+                        files.push(serde_json::json!({
+                            "type": "trades",
+                            "exchange": parts[0],
+                            "symbol": parts[1],
+                            "key": format!("{}:{}", parts[0], parts[1]),
+                            "size_bytes": metadata.len(),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "files": files,
+        "count": files.len(),
+    })))
 }
 
 /// GET /api/v1/tickers
