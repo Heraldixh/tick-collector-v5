@@ -117,6 +117,9 @@ async fn main() -> std::io::Result<()> {
                     .route("/storage/list", web::get().to(api::list_storage))
                     .route("/storage/clear-all", web::delete().to(api::clear_all_storage))
                     .route("/storage/clear/{exchange}/{symbol}", web::delete().to(api::clear_ticker_storage))
+                    // Active tickers management (admin only - controls 24/7 collection)
+                    .route("/active-tickers", web::get().to(api::get_active_tickers))
+                    .route("/active-tickers/{exchange}/{symbol}", web::delete().to(api::remove_active_ticker))
                     // Database statistics
                     .route("/db/stats", web::get().to(api::db_stats))
             )

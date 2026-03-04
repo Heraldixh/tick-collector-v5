@@ -371,12 +371,15 @@ pub async fn start_single_stream(
     log::info!("Stream {} stopped (removed from config)", key);
 }
 
-/// Check if a ticker is still in the saved config
+/// Check if a ticker is still in the active_tickers list for 24/7 collection
+/// This is separate from pane_tickers (browser display) - streams only stop
+/// when admin explicitly removes a ticker, NOT when browser closes
 fn check_ticker_in_config(key: &str) -> bool {
     let config_path = "data/config.json";
     if let Ok(contents) = std::fs::read_to_string(config_path) {
         if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
-            return config.pane_tickers.iter().any(|t| t.as_ref() == Some(&key.to_string()));
+            // Check active_tickers (persistent 24/7 collection list)
+            return config.active_tickers.contains(&key.to_string());
         }
     }
     // If config doesn't exist or can't be read, keep the stream running
@@ -402,34 +405,36 @@ pub async fn start_exchange_connections(state: Arc<RwLock<AppState>>) {
     
     log::info!("📋 Loaded {} tickers for sidebar.", all_tickers.len());
     
-    // Load saved config and start PERSISTENT 24/7 streams for configured tickers
+    // Load saved config and start PERSISTENT 24/7 streams for active_tickers
+    // active_tickers persists independently of browser state - only admin can modify
     let config_path = "data/config.json";
     if let Ok(contents) = std::fs::read_to_string(config_path) {
         if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
             let mut active_count = 0;
-            for ticker_opt in &config.pane_tickers {
-                if let Some(ticker_key) = ticker_opt {
-                    if let Some((exchange, symbol)) = ticker_key.split_once(':') {
-                        let state_clone = Arc::clone(&state);
-                        let key = ticker_key.clone();
-                        let exchange_owned = exchange.to_string();
-                        let symbol_owned = symbol.to_string();
-                        
-                        // Start PERSISTENT stream - runs 24/7 regardless of browser connections
-                        tokio::spawn(async move {
-                            start_single_stream(state_clone, &exchange_owned, &symbol_owned, &key).await;
-                        });
-                        active_count += 1;
-                    }
+            
+            // Start streams for all active_tickers (persistent 24/7 collection)
+            for ticker_key in &config.active_tickers {
+                if let Some((exchange, symbol)) = ticker_key.split_once(':') {
+                    let state_clone = Arc::clone(&state);
+                    let key = ticker_key.clone();
+                    let exchange_owned = exchange.to_string();
+                    let symbol_owned = symbol.to_string();
+                    
+                    // Start PERSISTENT stream - runs 24/7 regardless of browser connections
+                    tokio::spawn(async move {
+                        start_single_stream(state_clone, &exchange_owned, &symbol_owned, &key).await;
+                    });
+                    active_count += 1;
                 }
             }
+            
             if active_count > 0 {
-                log::info!("🚀 Started {} PERSISTENT 24/7 streams from saved config", active_count);
+                log::info!("🚀 Started {} PERSISTENT 24/7 streams from active_tickers", active_count);
             }
         }
     }
     
-    log::info!("✅ Server ready. Data collection runs 24/7 for configured tickers.");
+    log::info!("✅ Server ready. Data collection runs 24/7 for active tickers (browser-independent).");
 }
 
 async fn connect_binance_stream(

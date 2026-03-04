@@ -42,8 +42,10 @@ pub struct TickerInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChartConfig {
-    pub pane_tickers: [Option<String>; 9], // "binance:BTCUSDT" format
+    pub pane_tickers: [Option<String>; 9], // "binance:BTCUSDT" format - what browser displays
     pub filters: FilterConfig,
+    #[serde(default)]
+    pub active_tickers: Vec<String>, // Tickers for 24/7 collection - persists independently of browser
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -58,6 +60,7 @@ impl Default for ChartConfig {
         Self {
             pane_tickers: [None, None, None, None, None, None, None, None, None],
             filters: FilterConfig::default(),
+            active_tickers: Vec::new(),
         }
     }
 }

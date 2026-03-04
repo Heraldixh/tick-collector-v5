@@ -639,13 +639,38 @@ pub async fn get_config(
 
 /// POST /api/v1/config
 /// Saves admin's chart configuration and persists to disk
-/// This controls which tickers the server collects data for
-/// IMPORTANT: When new tickers are added, this starts 24/7 persistent streams for them
+/// pane_tickers = what browser displays (can change freely)
+/// active_tickers = what server collects 24/7 (persists independently of browser)
+/// When admin adds a ticker to a pane, it's also added to active_tickers
+/// active_tickers are NEVER removed by browser disconnect - only by explicit admin action
 pub async fn save_config(
     state: web::Data<Arc<RwLock<AppState>>>,
     config: web::Json<ChartConfig>,
 ) -> Result<HttpResponse> {
-    let config_data = config.into_inner();
+    let mut config_data = config.into_inner();
+    
+    // Load existing config to preserve active_tickers
+    let config_path = "data/config.json";
+    let mut existing_active_tickers: Vec<String> = Vec::new();
+    if let Ok(contents) = fs::read_to_string(config_path) {
+        if let Ok(existing_config) = serde_json::from_str::<ChartConfig>(&contents) {
+            existing_active_tickers = existing_config.active_tickers;
+        }
+    }
+    
+    // Add any new tickers from pane_tickers to active_tickers (but never remove)
+    // This ensures tickers persist for 24/7 collection even when browser closes
+    for ticker_opt in &config_data.pane_tickers {
+        if let Some(ticker_key) = ticker_opt {
+            if !existing_active_tickers.contains(ticker_key) {
+                existing_active_tickers.push(ticker_key.clone());
+                log::info!("➕ Added {} to active_tickers for 24/7 collection", ticker_key);
+            }
+        }
+    }
+    
+    // Update config with merged active_tickers
+    config_data.active_tickers = existing_active_tickers;
     
     // Save to memory
     {
@@ -654,31 +679,28 @@ pub async fn save_config(
     }
     
     // Persist to disk so server can restore on restart
-    let config_path = "data/config.json";
     let _ = fs::create_dir_all("data");
     if let Ok(json) = serde_json::to_string_pretty(&config_data) {
         if let Err(e) = fs::write(config_path, &json) {
             log::error!("Failed to save config to disk: {}", e);
         } else {
-            log::info!("📝 Admin config saved: {:?}", config_data.pane_tickers);
+            log::info!("📝 Config saved: panes={:?}, active_tickers={:?}", 
+                config_data.pane_tickers, config_data.active_tickers);
         }
     }
     
-    // Start 24/7 persistent streams for any newly configured tickers
-    // This ensures data collection starts immediately when admin adds a ticker
-    for ticker_opt in &config_data.pane_tickers {
-        if let Some(ticker_key) = ticker_opt {
-            if let Some((exchange, symbol)) = ticker_key.split_once(':') {
-                let state_inner: Arc<RwLock<AppState>> = (**state).clone();
-                let key = ticker_key.clone();
-                let exchange_owned = exchange.to_string();
-                let symbol_owned = symbol.to_string();
-                
-                // Spawn persistent stream (will check if already running internally)
-                tokio::spawn(async move {
-                    crate::exchange::start_single_stream(state_inner, &exchange_owned, &symbol_owned, &key).await;
-                });
-            }
+    // Start 24/7 persistent streams for all active_tickers
+    for ticker_key in &config_data.active_tickers {
+        if let Some((exchange, symbol)) = ticker_key.split_once(':') {
+            let state_inner: Arc<RwLock<AppState>> = (**state).clone();
+            let key = ticker_key.clone();
+            let exchange_owned = exchange.to_string();
+            let symbol_owned = symbol.to_string();
+            
+            // Spawn persistent stream (will check if already running internally)
+            tokio::spawn(async move {
+                crate::exchange::start_single_stream(state_inner, &exchange_owned, &symbol_owned, &key).await;
+            });
         }
     }
     
@@ -1591,4 +1613,74 @@ pub async fn db_stats() -> Result<HttpResponse> {
             "error": format!("Failed to get database stats: {}", e)
         }))),
     }
+}
+
+/// GET /api/v1/active-tickers
+/// Get list of tickers being collected 24/7 (independent of browser state)
+pub async fn get_active_tickers() -> Result<HttpResponse> {
+    let config_path = "data/config.json";
+    if let Ok(contents) = fs::read_to_string(config_path) {
+        if let Ok(config) = serde_json::from_str::<ChartConfig>(&contents) {
+            return Ok(HttpResponse::Ok().json(serde_json::json!({
+                "active_tickers": config.active_tickers,
+                "count": config.active_tickers.len()
+            })));
+        }
+    }
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "active_tickers": Vec::<String>::new(),
+        "count": 0
+    })))
+}
+
+/// DELETE /api/v1/active-tickers/{exchange}/{symbol}
+/// Remove a ticker from 24/7 collection (admin only - stops the stream)
+pub async fn remove_active_ticker(
+    path: web::Path<(String, String)>,
+) -> Result<HttpResponse> {
+    let (exchange, symbol) = path.into_inner();
+    let ticker_key = format!("{}:{}", exchange.to_lowercase(), symbol.to_uppercase());
+    
+    let config_path = "data/config.json";
+    
+    // Load existing config
+    let mut config = if let Ok(contents) = fs::read_to_string(config_path) {
+        serde_json::from_str::<ChartConfig>(&contents).unwrap_or_default()
+    } else {
+        ChartConfig::default()
+    };
+    
+    // Remove from active_tickers
+    let original_len = config.active_tickers.len();
+    config.active_tickers.retain(|t| t != &ticker_key);
+    
+    if config.active_tickers.len() == original_len {
+        return Ok(HttpResponse::NotFound().json(serde_json::json!({
+            "error": format!("Ticker {} not found in active_tickers", ticker_key)
+        })));
+    }
+    
+    // Also remove from pane_tickers if present
+    for pane in config.pane_tickers.iter_mut() {
+        if pane.as_ref() == Some(&ticker_key) {
+            *pane = None;
+        }
+    }
+    
+    // Save updated config
+    if let Ok(json) = serde_json::to_string_pretty(&config) {
+        if let Err(e) = fs::write(config_path, &json) {
+            log::error!("Failed to save config: {}", e);
+            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to save config: {}", e)
+            })));
+        }
+    }
+    
+    log::info!("🗑️ Removed {} from active_tickers - stream will stop", ticker_key);
+    
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "removed": ticker_key,
+        "remaining_active_tickers": config.active_tickers
+    })))
 }
