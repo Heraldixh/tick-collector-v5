@@ -460,16 +460,24 @@ async fn connect_binance_stream(
                         json["T"].as_u64(),
                         json["m"].as_bool(),
                     ) {
+                        let price_val: f64 = price.parse().unwrap_or(0.0);
+                        let qty_val: f64 = qty.parse().unwrap_or(0.0);
+                        
                         let trade = Trade {
                             timestamp: time,
-                            price: price.parse().unwrap_or(0.0),
-                            quantity: qty.parse().unwrap_or(0.0),
+                            price: price_val,
+                            quantity: qty_val,
                             is_buyer_maker: is_buyer,
                         };
                         
                         trade_count += 1;
                         if trade_count % 100 == 1 {
                             log::info!("Trade #{} for {}: price={}", trade_count, key, trade.price);
+                        }
+                        
+                        // Save to SQLite database for persistence
+                        if let Err(e) = crate::db::insert_trade("binance", symbol, time, price_val, qty_val, is_buyer) {
+                            log::error!("Failed to save trade to DB: {}", e);
                         }
                         
                         let mut state = state.write();
@@ -526,12 +534,19 @@ async fn connect_bybit_stream(
                                 t["T"].as_u64(),
                                 t["S"].as_str(),
                             ) {
+                                let price_val: f64 = price.parse().unwrap_or(0.0);
+                                let qty_val: f64 = qty.parse().unwrap_or(0.0);
+                                let is_buyer_maker = side == "Sell";
+                                
                                 let trade = Trade {
                                     timestamp: time,
-                                    price: price.parse().unwrap_or(0.0),
-                                    quantity: qty.parse().unwrap_or(0.0),
-                                    is_buyer_maker: side == "Sell",
+                                    price: price_val,
+                                    quantity: qty_val,
+                                    is_buyer_maker,
                                 };
+                                
+                                // Save to SQLite database for persistence
+                                let _ = crate::db::insert_trade("bybit", symbol, time, price_val, qty_val, is_buyer_maker);
                                 
                                 let mut state = state.write();
                                 state.add_trade(key, trade);
@@ -593,12 +608,20 @@ async fn connect_okx_stream(
                                 t["ts"].as_str(),
                                 t["side"].as_str(),
                             ) {
+                                let timestamp: u64 = time.parse().unwrap_or(0);
+                                let price_val: f64 = price.parse().unwrap_or(0.0);
+                                let qty_val: f64 = qty.parse().unwrap_or(0.0);
+                                let is_buyer_maker = side == "sell";
+                                
                                 let trade = Trade {
-                                    timestamp: time.parse().unwrap_or(0),
-                                    price: price.parse().unwrap_or(0.0),
-                                    quantity: qty.parse().unwrap_or(0.0),
-                                    is_buyer_maker: side == "sell",
+                                    timestamp,
+                                    price: price_val,
+                                    quantity: qty_val,
+                                    is_buyer_maker,
                                 };
+                                
+                                // Save to SQLite database for persistence
+                                let _ = crate::db::insert_trade("okx", symbol, timestamp, price_val, qty_val, is_buyer_maker);
                                 
                                 let mut state = state.write();
                                 state.add_trade(key, trade);
@@ -657,12 +680,19 @@ async fn connect_hyperliquid_stream(
                                 t["time"].as_u64(),
                                 t["side"].as_str(),
                             ) {
+                                let price_val: f64 = price.parse().unwrap_or(0.0);
+                                let qty_val: f64 = qty.parse().unwrap_or(0.0);
+                                let is_buyer_maker = side == "A";
+                                
                                 let trade = Trade {
                                     timestamp: time,
-                                    price: price.parse().unwrap_or(0.0),
-                                    quantity: qty.parse().unwrap_or(0.0),
-                                    is_buyer_maker: side == "A",
+                                    price: price_val,
+                                    quantity: qty_val,
+                                    is_buyer_maker,
                                 };
+                                
+                                // Save to SQLite database for persistence
+                                let _ = crate::db::insert_trade("hyperliquid", symbol, time, price_val, qty_val, is_buyer_maker);
                                 
                                 let mut state = state.write();
                                 state.add_trade(key, trade);

@@ -22,6 +22,7 @@ mod api;
 mod websocket;
 mod exchange;
 mod state;
+mod db;
 
 use state::AppState;
 
@@ -41,6 +42,10 @@ async fn main() -> std::io::Result<()> {
     // Create data directories
     std::fs::create_dir_all("data/trades").ok();
     std::fs::create_dir_all("data/footprint").ok();
+    
+    // Initialize SQLite database
+    let _ = &*db::DB; // Force lazy initialization
+    log::info!("📦 SQLite database ready for multi-client access");
     
     log::info!("═══════════════════════════════════════════════════════════");
     log::info!("🚀 Tick Collector Web v{} - Production Server", VERSION);
@@ -112,6 +117,8 @@ async fn main() -> std::io::Result<()> {
                     .route("/storage/list", web::get().to(api::list_storage))
                     .route("/storage/clear-all", web::delete().to(api::clear_all_storage))
                     .route("/storage/clear/{exchange}/{symbol}", web::delete().to(api::clear_ticker_storage))
+                    // Database statistics
+                    .route("/db/stats", web::get().to(api::db_stats))
             )
             // WebSocket for live data
             .route("/ws/live/{exchange}/{symbol}", web::get().to(websocket::ws_handler))

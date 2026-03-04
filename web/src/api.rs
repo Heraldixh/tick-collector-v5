@@ -1577,4 +1577,18 @@ fn cleanup_old_trades_data() {
             }
         }
     }
+    
+    // Also cleanup SQLite database
+    let _ = crate::db::cleanup_old_data(DATA_RETENTION_DAYS);
+}
+
+/// GET /api/v1/db/stats
+/// Get database statistics
+pub async fn db_stats() -> Result<HttpResponse> {
+    match crate::db::get_stats() {
+        Ok(stats) => Ok(HttpResponse::Ok().json(stats)),
+        Err(e) => Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to get database stats: {}", e)
+        }))),
+    }
 }
