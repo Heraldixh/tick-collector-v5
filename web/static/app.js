@@ -373,11 +373,43 @@ async function saveFootprintData(tickerKey, footprintState) {
     }
 }
 
-// Load footprint data for a specific ticker from SERVER (file-based persistence)
+// Load footprint data for a specific ticker from SERVER
+// PRIORITY: 1) Server-side 24/7 aggregated data, 2) Browser-saved file data
 async function loadFootprintData(tickerKey) {
     try {
         const [exchange, symbol] = tickerKey.split(':');
         
+        // FIRST: Try to load server-side 24/7 aggregated footprint data
+        // This data is collected continuously regardless of browser state
+        try {
+            const serverResponse = await fetch(`${API_BASE}/api/v1/server-footprint/${exchange}/${symbol}`);
+            if (serverResponse.ok) {
+                const serverData = await serverResponse.json();
+                if (serverData && serverData.bars && serverData.bars.length > 0) {
+                    console.log(`📊 Loaded SERVER-SIDE footprint for ${tickerKey}: ${serverData.bars.length} bars, ${serverData.total_trades} total trades (24/7 collection)`);
+                    return {
+                        timestamp: Date.now(),
+                        tickerKey: tickerKey,
+                        settings: {
+                            tickCount: serverData.tick_count || 1000,
+                            tickSizeMultiplier: 50,
+                            baseTickSize: serverData.tick_size / 50,
+                            tickSize: serverData.tick_size,
+                        },
+                        bars: serverData.bars || [],
+                        allTrades: [], // Server handles aggregation, no need for raw trades
+                        tickBuffer: [], // Server handles buffering
+                        lastPrice: serverData.last_price,
+                        highPrice: serverData.high_price,
+                        lowPrice: serverData.low_price,
+                    };
+                }
+            }
+        } catch (e) {
+            console.log(`Server-side footprint not available for ${tickerKey}, trying file-based...`);
+        }
+        
+        // FALLBACK: Load from browser-saved file data
         const response = await fetch(`${API_BASE}/api/v1/footprint/${exchange}/${symbol}`);
         
         if (!response.ok) {
@@ -413,7 +445,7 @@ async function loadFootprintData(tickerKey) {
         const ageMs = Date.now() - converted.timestamp;
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         
-        console.log(`📂 Loaded ${tickerKey}: ${converted.bars?.length || 0} bars, ${converted.allTrades?.length || 0} trades (${ageDays.toFixed(1)} days old) [server]`);
+        console.log(`📂 Loaded ${tickerKey}: ${converted.bars?.length || 0} bars, ${converted.allTrades?.length || 0} trades (${ageDays.toFixed(1)} days old) [file-based]`);
         return converted;
     } catch (e) {
         console.error(`Failed to load footprint data for ${tickerKey}:`, e);

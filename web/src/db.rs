@@ -355,6 +355,34 @@ impl Default for ServerFootprintState {
 pub static FOOTPRINT_STATES: Lazy<RwLock<HashMap<String, ServerFootprintState>>> = 
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Initialize footprint state for a ticker, loading existing bars from SQLite
+fn init_footprint_state(exchange: &str, symbol: &str, initial_price: f64) -> ServerFootprintState {
+    // Auto-detect tick size based on price
+    let tick_size = if initial_price > 10000.0 { 5.0 }
+        else if initial_price > 1000.0 { 1.0 }
+        else if initial_price > 100.0 { 0.1 }
+        else { 0.01 };
+    
+    let mut state = ServerFootprintState::default();
+    state.tick_size = tick_size;
+    
+    // Load existing bars from SQLite (persisted from previous session)
+    let cutoff = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64 - (7 * 24 * 60 * 60 * 1000); // 7 days ago
+    
+    if let Ok(bars) = get_footprint_bars(exchange, symbol, cutoff, 200) {
+        if !bars.is_empty() {
+            log::info!("📊 Loaded {} existing footprint bars for {}:{} from SQLite", 
+                bars.len(), exchange, symbol);
+            state.bars = bars;
+        }
+    }
+    
+    state
+}
+
 /// Process a trade and aggregate into footprint bars (server-side)
 /// This runs continuously regardless of browser connections
 pub fn process_trade_for_footprint(
@@ -369,15 +397,7 @@ pub fn process_trade_for_footprint(
     
     let mut states = FOOTPRINT_STATES.write();
     let state = states.entry(key.clone()).or_insert_with(|| {
-        // Auto-detect tick size based on price
-        let tick_size = if price > 10000.0 { 5.0 }
-            else if price > 1000.0 { 1.0 }
-            else if price > 100.0 { 0.1 }
-            else { 0.01 };
-        
-        let mut s = ServerFootprintState::default();
-        s.tick_size = tick_size;
-        s
+        init_footprint_state(exchange, symbol, price)
     });
     
     // Update price tracking
