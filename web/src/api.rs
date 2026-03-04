@@ -409,7 +409,7 @@ fn get_storage_stats() -> StorageStats {
 }
 
 /// DELETE /api/v1/storage/clear-all
-/// Clears all storage data (footprint and trades files)
+/// Clears ALL storage data: SQLite database tables, footprint files, trades files, and in-memory state
 /// Requires admin session authentication
 pub async fn clear_all_storage(
     req: HttpRequest,
@@ -424,9 +424,40 @@ pub async fn clear_all_storage(
     
     let mut deleted_footprint = 0;
     let mut deleted_trades = 0;
+    let mut deleted_db_trades = 0;
+    let mut deleted_db_bars = 0;
     let mut errors: Vec<String> = Vec::new();
     
-    // Clear footprint files
+    // 1. Clear SQLite database tables (PRIMARY STORAGE)
+    {
+        let conn = crate::db::DB.lock();
+        match conn.execute("DELETE FROM trades", []) {
+            Ok(count) => {
+                deleted_db_trades = count;
+                log::info!("🗑️ Deleted {} trades from SQLite", count);
+            }
+            Err(e) => errors.push(format!("Failed to clear trades table: {}", e)),
+        }
+        match conn.execute("DELETE FROM footprint_bars", []) {
+            Ok(count) => {
+                deleted_db_bars = count;
+                log::info!("🗑️ Deleted {} footprint bars from SQLite", count);
+            }
+            Err(e) => errors.push(format!("Failed to clear footprint_bars table: {}", e)),
+        }
+        // Vacuum to reclaim disk space
+        let _ = conn.execute("VACUUM", []);
+    }
+    
+    // 2. Clear server-side footprint state (in-memory)
+    {
+        let mut states = crate::db::FOOTPRINT_STATES.write();
+        let count = states.len();
+        states.clear();
+        log::info!("🗑️ Cleared {} in-memory footprint states", count);
+    }
+    
+    // 3. Clear footprint files (legacy)
     if let Ok(entries) = fs::read_dir(FOOTPRINT_DATA_DIR) {
         for entry in entries.flatten() {
             if let Err(e) = fs::remove_file(entry.path()) {
@@ -437,7 +468,7 @@ pub async fn clear_all_storage(
         }
     }
     
-    // Clear trades files
+    // 4. Clear trades files (legacy)
     if let Ok(entries) = fs::read_dir(TRADES_DATA_DIR) {
         for entry in entries.flatten() {
             if let Err(e) = fs::remove_file(entry.path()) {
@@ -448,16 +479,20 @@ pub async fn clear_all_storage(
         }
     }
     
-    // Clear in-memory trades
+    // 5. Clear in-memory trades and candles
     {
         let mut state = state.write();
         state.trades.clear();
+        state.candles.clear();
     }
     
-    log::info!("🗑️ Storage cleared: {} footprint files, {} trades files deleted", deleted_footprint, deleted_trades);
+    log::info!("🗑️ Storage cleared: {} DB trades, {} DB bars, {} footprint files, {} trades files", 
+        deleted_db_trades, deleted_db_bars, deleted_footprint, deleted_trades);
     
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "success": true,
+        "deleted_db_trades": deleted_db_trades,
+        "deleted_db_bars": deleted_db_bars,
         "deleted_footprint_files": deleted_footprint,
         "deleted_trades_files": deleted_trades,
         "errors": errors,
@@ -465,7 +500,7 @@ pub async fn clear_all_storage(
 }
 
 /// DELETE /api/v1/storage/clear/{exchange}/{symbol}
-/// Clears storage data for a specific ticker
+/// Clears ALL storage data for a specific ticker: SQLite, files, and in-memory
 /// Requires admin session authentication
 pub async fn clear_ticker_storage(
     req: HttpRequest,
@@ -480,14 +515,51 @@ pub async fn clear_ticker_storage(
     }
     
     let (exchange, symbol) = path.into_inner();
-    let key = format!("{}:{}", exchange.to_lowercase(), symbol.to_uppercase());
-    let file_prefix = format!("{}_{}", exchange.to_lowercase(), symbol.to_uppercase());
+    let exchange_lower = exchange.to_lowercase();
+    let symbol_upper = symbol.to_uppercase();
+    let key = format!("{}:{}", exchange_lower, symbol_upper);
+    let file_prefix = format!("{}_{}", exchange_lower, symbol_upper);
     
     let mut deleted_footprint = false;
     let mut deleted_trades = false;
+    let mut deleted_db_trades = 0;
+    let mut deleted_db_bars = 0;
     let mut errors: Vec<String> = Vec::new();
     
-    // Delete footprint file
+    // 1. Clear SQLite database for this ticker
+    {
+        let conn = crate::db::DB.lock();
+        match conn.execute(
+            "DELETE FROM trades WHERE exchange = ?1 AND symbol = ?2",
+            rusqlite::params![exchange_lower, symbol_upper],
+        ) {
+            Ok(count) => {
+                deleted_db_trades = count;
+                log::info!("🗑️ Deleted {} trades from SQLite for {}", count, key);
+            }
+            Err(e) => errors.push(format!("Failed to clear trades: {}", e)),
+        }
+        match conn.execute(
+            "DELETE FROM footprint_bars WHERE exchange = ?1 AND symbol = ?2",
+            rusqlite::params![exchange_lower, symbol_upper],
+        ) {
+            Ok(count) => {
+                deleted_db_bars = count;
+                log::info!("🗑️ Deleted {} footprint bars from SQLite for {}", count, key);
+            }
+            Err(e) => errors.push(format!("Failed to clear footprint_bars: {}", e)),
+        }
+    }
+    
+    // 2. Clear server-side footprint state for this ticker
+    {
+        let mut states = crate::db::FOOTPRINT_STATES.write();
+        if states.remove(&key).is_some() {
+            log::info!("🗑️ Cleared in-memory footprint state for {}", key);
+        }
+    }
+    
+    // 3. Delete footprint file (legacy)
     let footprint_path = format!("{}/{}.json", FOOTPRINT_DATA_DIR, file_prefix);
     if Path::new(&footprint_path).exists() {
         if let Err(e) = fs::remove_file(&footprint_path) {
@@ -497,7 +569,7 @@ pub async fn clear_ticker_storage(
         }
     }
     
-    // Delete trades file
+    // 4. Delete trades file (legacy)
     let trades_path = format!("{}/{}.json", TRADES_DATA_DIR, file_prefix);
     if Path::new(&trades_path).exists() {
         if let Err(e) = fs::remove_file(&trades_path) {
@@ -507,19 +579,22 @@ pub async fn clear_ticker_storage(
         }
     }
     
-    // Clear in-memory trades for this ticker
+    // 5. Clear in-memory trades and candles for this ticker
     {
         let mut state = state.write();
         state.trades.remove(&key);
+        state.candles.remove(&key);
     }
     
-    log::info!("🗑️ Storage cleared for {}: footprint={}, trades={}", key, deleted_footprint, deleted_trades);
+    log::info!("🗑️ Storage cleared for {}: {} DB trades, {} DB bars", key, deleted_db_trades, deleted_db_bars);
     
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "success": true,
         "ticker": key,
-        "deleted_footprint": deleted_footprint,
-        "deleted_trades": deleted_trades,
+        "deleted_db_trades": deleted_db_trades,
+        "deleted_db_bars": deleted_db_bars,
+        "deleted_footprint_file": deleted_footprint,
+        "deleted_trades_file": deleted_trades,
         "errors": errors,
     })))
 }
