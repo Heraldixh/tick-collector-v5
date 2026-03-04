@@ -82,7 +82,21 @@ fn init_database() -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
-/// Insert a trade into the database
+// ============================================================================
+// BATCHED TRADE INSERTION (reduces SQLite blocking)
+// ============================================================================
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Trade buffer for batched inserts (reduces lock contention)
+static TRADE_BATCH: Lazy<Mutex<Vec<(String, String, u64, f64, f64, bool)>>> = 
+    Lazy::new(|| Mutex::new(Vec::with_capacity(100)));
+
+/// Last flush timestamp
+static LAST_FLUSH: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+
+/// Queue a trade for batched insertion (non-blocking)
+/// Trades are flushed every 100 trades or every 2 seconds
 pub fn insert_trade(
     exchange: &str,
     symbol: &str,
@@ -91,12 +105,58 @@ pub fn insert_trade(
     quantity: f64,
     is_buyer_maker: bool,
 ) -> Result<(), rusqlite::Error> {
-    let conn = DB.lock();
-    conn.execute(
-        "INSERT INTO trades (exchange, symbol, timestamp, price, quantity, is_buyer_maker)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![exchange, symbol, timestamp as i64, price, quantity, is_buyer_maker as i32],
-    )?;
+    let mut batch = TRADE_BATCH.lock();
+    batch.push((
+        exchange.to_string(),
+        symbol.to_string(),
+        timestamp,
+        price,
+        quantity,
+        is_buyer_maker,
+    ));
+    
+    // Flush if batch is full (100 trades) or 2 seconds elapsed
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let last = LAST_FLUSH.load(Ordering::Relaxed);
+    
+    if batch.len() >= 100 || (now - last >= 2 && !batch.is_empty()) {
+        let trades_to_flush: Vec<_> = batch.drain(..).collect();
+        LAST_FLUSH.store(now, Ordering::Relaxed);
+        drop(batch); // Release lock before DB operation
+        
+        // Flush in background to avoid blocking
+        std::thread::spawn(move || {
+            if let Err(e) = flush_trade_batch(&trades_to_flush) {
+                log::error!("Failed to flush trade batch: {}", e);
+            }
+        });
+    }
+    
+    Ok(())
+}
+
+/// Flush trade batch to SQLite (called from background thread)
+fn flush_trade_batch(trades: &[(String, String, u64, f64, f64, bool)]) -> Result<(), rusqlite::Error> {
+    if trades.is_empty() {
+        return Ok(());
+    }
+    
+    let mut conn = DB.lock();
+    let tx = conn.transaction()?;
+    
+    for (exchange, symbol, timestamp, price, quantity, is_buyer_maker) in trades {
+        tx.execute(
+            "INSERT OR IGNORE INTO trades (exchange, symbol, timestamp, price, quantity, is_buyer_maker)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![exchange, symbol, *timestamp as i64, price, quantity, *is_buyer_maker as i32],
+        )?;
+    }
+    
+    tx.commit()?;
+    log::debug!("Flushed {} trades to SQLite", trades.len());
     Ok(())
 }
 
@@ -424,9 +484,9 @@ pub fn process_trade_for_footprint(
             log::error!("Failed to save footprint bar: {}", e);
         }
         
-        // Keep in memory (limit to 200 bars)
+        // Keep in memory (limit to 50 bars for f1-micro memory)
         state.bars.push(bar);
-        if state.bars.len() > 200 {
+        if state.bars.len() > 50 {
             state.bars.remove(0);
         }
         

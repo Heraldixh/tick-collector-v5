@@ -4,11 +4,11 @@ use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 
-/// Maximum trades to keep in memory per symbol (for f1-micro memory limits)
-const MAX_TRADES_PER_SYMBOL: usize = 10_000;
+/// Maximum trades to keep in memory per symbol (reduced for f1-micro 0.6GB RAM)
+const MAX_TRADES_PER_SYMBOL: usize = 2_000;
 
 /// Maximum candles to keep in memory per symbol/timeframe
-const MAX_CANDLES_PER_SYMBOL: usize = 1_000;
+const MAX_CANDLES_PER_SYMBOL: usize = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
@@ -169,12 +169,18 @@ impl AppState {
     
     pub fn subscribe(&mut self, key: &str) -> tokio::sync::mpsc::UnboundedReceiver<String> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.subscribers
+        let subs = self.subscribers
             .entry(key.to_string())
-            .or_insert_with(Vec::new)
-            .push(tx);
-        log::info!("New subscriber for key '{}', total subscribers: {}", key, 
-            self.subscribers.get(key).map(|v| v.len()).unwrap_or(0));
+            .or_insert_with(Vec::new);
+        
+        // Limit subscribers per ticker to prevent memory issues
+        if subs.len() >= 10 {
+            log::warn!("Max subscribers (10) reached for {}, removing oldest", key);
+            subs.remove(0);
+        }
+        
+        subs.push(tx);
+        log::info!("New subscriber for key '{}', total subscribers: {}", key, subs.len());
         rx
     }
 }

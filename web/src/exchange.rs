@@ -371,19 +371,38 @@ pub async fn start_single_stream(
     log::info!("Stream {} stopped (removed from config)", key);
 }
 
+/// Cache for active tickers config (reduces file I/O)
+static CONFIG_CACHE: Lazy<Mutex<(Vec<String>, u64)>> = Lazy::new(|| Mutex::new((Vec::new(), 0)));
+
 /// Check if a ticker is still in the active_tickers list for 24/7 collection
 /// This is separate from pane_tickers (browser display) - streams only stop
 /// when admin explicitly removes a ticker, NOT when browser closes
+/// Uses cached config to avoid blocking file I/O on every check
 fn check_ticker_in_config(key: &str) -> bool {
-    let config_path = "data/config.json";
-    if let Ok(contents) = std::fs::read_to_string(config_path) {
-        if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
-            // Check active_tickers (persistent 24/7 collection list)
-            return config.active_tickers.contains(&key.to_string());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let mut cache = CONFIG_CACHE.lock();
+    
+    // Refresh cache every 10 seconds
+    if now - cache.1 > 10 {
+        let config_path = "data/config.json";
+        if let Ok(contents) = std::fs::read_to_string(config_path) {
+            if let Ok(config) = serde_json::from_str::<crate::state::ChartConfig>(&contents) {
+                cache.0 = config.active_tickers;
+                cache.1 = now;
+            }
         }
     }
-    // If config doesn't exist or can't be read, keep the stream running
-    true
+    
+    // If cache is empty (first run or no config), keep stream running
+    if cache.0.is_empty() && cache.1 == 0 {
+        return true;
+    }
+    
+    cache.0.contains(&key.to_string())
 }
 
 /// Start WebSocket connections to exchanges
