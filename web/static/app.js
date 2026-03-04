@@ -1652,6 +1652,35 @@ async function assignTickerToPane(tickerKey, paneIndex) {
     // Initial render
     renderFootprint();
     
+    // Poll server for updated footprint bars (server does 24/7 aggregation)
+    // This ensures browser always shows server-side aggregated data
+    let serverPollInterval = null;
+    let lastServerBarCount = footprintState.bars.length;
+    
+    async function pollServerFootprint() {
+        try {
+            const response = await fetch(`${API_BASE}/api/v1/server-footprint/${exchange}/${symbol}`);
+            if (response.ok) {
+                const serverData = await response.json();
+                if (serverData && serverData.bars) {
+                    // Only update if server has more bars than we have
+                    if (serverData.bars.length > lastServerBarCount || 
+                        (serverData.bars.length > 0 && footprintState.bars.length === 0)) {
+                        console.log(`📊 Server has ${serverData.bars.length} bars (was ${lastServerBarCount})`);
+                        footprintState.bars = serverData.bars;
+                        footprintState.lastPrice = serverData.last_price;
+                        footprintState.highPrice = serverData.high_price;
+                        footprintState.lowPrice = serverData.low_price;
+                        lastServerBarCount = serverData.bars.length;
+                        renderFootprint();
+                    }
+                }
+            }
+        } catch (e) {
+            // Silent fail - will retry on next poll
+        }
+    }
+    
     // Connect WebSocket with auto-reconnect
     function connectWebSocket() {
         const ws = new WebSocket(`${WS_BASE}/ws/live/${exchange}/${symbol}`);
@@ -1660,28 +1689,28 @@ async function assignTickerToPane(tickerKey, paneIndex) {
             console.log(`WebSocket connected: ${tickerKey}`);
             updateConnectionStatus('connected');
             
-            // BACKUP: Fill gap between last saved data and now
-            // This handles the case where app was offline and is now reconnecting
-            fillDataGap(exchange, symbol, footprintState);
+            // Start polling server for footprint updates (every 2 seconds)
+            // Server does the aggregation 24/7, browser just displays
+            if (serverPollInterval) clearInterval(serverPollInterval);
+            serverPollInterval = setInterval(pollServerFootprint, 2000);
+            
+            // Update pane state with poll interval reference for cleanup
+            if (state.panes[paneIndex]) {
+                state.panes[paneIndex].serverPollInterval = serverPollInterval;
+            }
+            
+            // Initial poll to get latest server data
+            pollServerFootprint();
         };
         
         ws.onmessage = (event) => {
             try {
                 const trade = JSON.parse(event.data);
                 
-                // Store ALL trades for re-aggregation when settings change
-                footprintState.allTrades.push(trade);
-                
-                // Limit stored trades for memory (keep last 100k trades)
-                if (footprintState.allTrades.length > 100000) {
-                    footprintState.allTrades = footprintState.allTrades.slice(-80000);
-                }
-                
-                // Add to tick buffer
-                footprintState.tickBuffer.push(trade);
+                // Update price display only (server handles bar aggregation)
                 footprintState.lastPrice = trade.price;
                 
-                // Update price range
+                // Update price range for display
                 if (!footprintState.highPrice || trade.price > footprintState.highPrice) {
                     footprintState.highPrice = trade.price;
                 }
@@ -1695,34 +1724,7 @@ async function assignTickerToPane(tickerKey, paneIndex) {
                     ticker.price = trade.price;
                 }
                 
-                // Create/update current forming bar
-                footprintState.currentBar = createFootprintBar(footprintState.tickBuffer);
-                
-                // Complete bar when tick count reached
-                if (footprintState.tickBuffer.length >= footprintState.tickCount) {
-                    footprintState.bars.push(footprintState.currentBar);
-                    footprintState.tickBuffer = [];
-                    footprintState.currentBar = null;
-                    footprintState.barsSinceLastSave = (footprintState.barsSinceLastSave || 0) + 1;
-                    
-                    // Keep max 200 bars for display (more for storage)
-                    if (footprintState.bars.length > 200) {
-                        footprintState.bars = footprintState.bars.slice(-150);
-                    }
-                    
-                    // Trim allTrades to prevent memory overflow (keep last 100k)
-                    if (footprintState.allTrades.length > 100000) {
-                        footprintState.allTrades = footprintState.allTrades.slice(-80000);
-                    }
-                    
-                    // CONTINUOUS SAVE: Save every N completed bars
-                    if (footprintState.barsSinceLastSave >= SAVE_ON_BAR_COUNT) {
-                        saveFootprintData(tickerKey, footprintState);
-                        footprintState.barsSinceLastSave = 0;
-                    }
-                }
-                
-                // Render updated chart
+                // Render with updated price line (bars come from server poll)
                 renderFootprint();
                 
                 // Update pane title with price
@@ -1741,21 +1743,25 @@ async function assignTickerToPane(tickerKey, paneIndex) {
         ws.onclose = () => {
             console.log(`WebSocket closed: ${tickerKey}`);
             
-            // Record disconnect time for gap calculation on reconnect
-            footprintState.lastDisconnectTime = Date.now();
+            // Keep polling server even when WebSocket is closed
+            // Server continues aggregating 24/7, we just display it
+            // (polling continues, will restart on reconnect anyway)
             
             // Auto-reconnect if pane still exists
             const pane = state.panes[paneIndex];
             if (pane && pane.ticker === tickerKey) {
                 updateConnectionStatus('reconnecting');
                 
-                // Note: Backup data will be fetched on reconnect (ws.onopen)
-                // This ensures we fill the gap with the most recent data available
-                
                 pane.reconnectTimer = setTimeout(() => {
                     console.log(`Reconnecting to ${tickerKey}...`);
                     pane.ws = connectWebSocket();
                 }, RECONNECT_DELAY);
+            } else {
+                // Pane was cleared, stop polling
+                if (serverPollInterval) {
+                    clearInterval(serverPollInterval);
+                    serverPollInterval = null;
+                }
             }
         };
         
@@ -1764,7 +1770,7 @@ async function assignTickerToPane(tickerKey, paneIndex) {
     
     const ws = connectWebSocket();
     
-    // Store pane state
+    // Store pane state (serverPollInterval is set inside connectWebSocket)
     state.panes[paneIndex] = {
         ticker: tickerKey,
         canvas,
@@ -1772,6 +1778,7 @@ async function assignTickerToPane(tickerKey, paneIndex) {
         resizeObserver,
         ws,
         reconnectTimer: null,
+        serverPollInterval: serverPollInterval, // Reference to poll interval for cleanup
     };
     
     // Update UI
@@ -1813,14 +1820,14 @@ function clearPane(paneIndex) {
     const pane = state.panes[paneIndex];
     if (!pane) return;
     
-    // Save footprint data before clearing (persist to localStorage)
-    if (pane.ticker && pane.footprintState) {
-        saveFootprintData(pane.ticker, pane.footprintState);
-    }
-    
     // Clear reconnect timer
     if (pane.reconnectTimer) {
         clearTimeout(pane.reconnectTimer);
+    }
+    
+    // Clear server poll interval
+    if (pane.serverPollInterval) {
+        clearInterval(pane.serverPollInterval);
     }
     
     // Close WebSocket
