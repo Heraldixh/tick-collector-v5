@@ -485,6 +485,9 @@ async fn connect_binance_stream(
                             log::error!("Failed to save trade to DB: {}", e);
                         }
                         
+                        // Process for server-side footprint aggregation (runs 24/7)
+                        crate::db::process_trade_for_footprint("binance", symbol, time, price_val, qty_val, is_buyer);
+                        
                         let mut state = state.write();
                         state.add_trade(key, trade);
                     }
@@ -552,6 +555,9 @@ async fn connect_bybit_stream(
                                 
                                 // Save to SQLite database for persistence
                                 let _ = crate::db::insert_trade("bybit", symbol, time, price_val, qty_val, is_buyer_maker);
+                                
+                                // Process for server-side footprint aggregation (runs 24/7)
+                                crate::db::process_trade_for_footprint("bybit", symbol, time, price_val, qty_val, is_buyer_maker);
                                 
                                 let mut state = state.write();
                                 state.add_trade(key, trade);
@@ -628,6 +634,9 @@ async fn connect_okx_stream(
                                 // Save to SQLite database for persistence
                                 let _ = crate::db::insert_trade("okx", symbol, timestamp, price_val, qty_val, is_buyer_maker);
                                 
+                                // Process for server-side footprint aggregation (runs 24/7)
+                                crate::db::process_trade_for_footprint("okx", symbol, timestamp, price_val, qty_val, is_buyer_maker);
+                                
                                 let mut state = state.write();
                                 state.add_trade(key, trade);
                             }
@@ -698,6 +707,9 @@ async fn connect_hyperliquid_stream(
                                 
                                 // Save to SQLite database for persistence
                                 let _ = crate::db::insert_trade("hyperliquid", symbol, time, price_val, qty_val, is_buyer_maker);
+                                
+                                // Process for server-side footprint aggregation (runs 24/7)
+                                crate::db::process_trade_for_footprint("hyperliquid", symbol, time, price_val, qty_val, is_buyer_maker);
                                 
                                 let mut state = state.write();
                                 state.add_trade(key, trade);

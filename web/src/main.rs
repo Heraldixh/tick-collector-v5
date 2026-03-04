@@ -120,6 +120,9 @@ async fn main() -> std::io::Result<()> {
                     // Active tickers management (admin only - controls 24/7 collection)
                     .route("/active-tickers", web::get().to(api::get_active_tickers))
                     .route("/active-tickers/{exchange}/{symbol}", web::delete().to(api::remove_active_ticker))
+                    // Server-side footprint data (runs 24/7 independent of browser)
+                    .route("/server-footprint", web::get().to(api::get_all_server_footprints))
+                    .route("/server-footprint/{exchange}/{symbol}", web::get().to(api::get_server_footprint))
                     // Database statistics
                     .route("/db/stats", web::get().to(api::db_stats))
             )

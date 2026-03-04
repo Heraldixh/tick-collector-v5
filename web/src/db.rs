@@ -307,3 +307,218 @@ pub fn get_stats() -> Result<serde_json::Value, rusqlite::Error> {
         "database_size_mb": db_size as f64 / 1024.0 / 1024.0,
     }))
 }
+
+// ============================================================================
+// SERVER-SIDE FOOTPRINT AGGREGATION
+// Runs continuously on the server, independent of browser connections
+// ============================================================================
+
+use std::collections::HashMap;
+use parking_lot::RwLock;
+
+/// Server-side footprint state for each ticker
+pub struct ServerFootprintState {
+    pub tick_buffer: Vec<TradeData>,
+    pub bars: Vec<serde_json::Value>,
+    pub tick_count: usize,
+    pub tick_size: f64,
+    pub last_price: f64,
+    pub high_price: f64,
+    pub low_price: f64,
+    pub trade_count: u64,
+}
+
+#[derive(Clone)]
+pub struct TradeData {
+    pub timestamp: u64,
+    pub price: f64,
+    pub quantity: f64,
+    pub is_buyer_maker: bool,
+}
+
+impl Default for ServerFootprintState {
+    fn default() -> Self {
+        Self {
+            tick_buffer: Vec::new(),
+            bars: Vec::new(),
+            tick_count: 1000, // Default 1000T aggregation
+            tick_size: 5.0,   // Default tick size
+            last_price: 0.0,
+            high_price: 0.0,
+            low_price: f64::MAX,
+            trade_count: 0,
+        }
+    }
+}
+
+/// Global server-side footprint states (one per active ticker)
+pub static FOOTPRINT_STATES: Lazy<RwLock<HashMap<String, ServerFootprintState>>> = 
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Process a trade and aggregate into footprint bars (server-side)
+/// This runs continuously regardless of browser connections
+pub fn process_trade_for_footprint(
+    exchange: &str,
+    symbol: &str,
+    timestamp: u64,
+    price: f64,
+    quantity: f64,
+    is_buyer_maker: bool,
+) {
+    let key = format!("{}:{}", exchange, symbol);
+    
+    let mut states = FOOTPRINT_STATES.write();
+    let state = states.entry(key.clone()).or_insert_with(|| {
+        // Auto-detect tick size based on price
+        let tick_size = if price > 10000.0 { 5.0 }
+            else if price > 1000.0 { 1.0 }
+            else if price > 100.0 { 0.1 }
+            else { 0.01 };
+        
+        let mut s = ServerFootprintState::default();
+        s.tick_size = tick_size;
+        s
+    });
+    
+    // Update price tracking
+    state.last_price = price;
+    if price > state.high_price { state.high_price = price; }
+    if price < state.low_price { state.low_price = price; }
+    state.trade_count += 1;
+    
+    // Add to tick buffer
+    state.tick_buffer.push(TradeData {
+        timestamp,
+        price,
+        quantity,
+        is_buyer_maker,
+    });
+    
+    // Check if we have enough ticks to complete a bar
+    if state.tick_buffer.len() >= state.tick_count {
+        // Create footprint bar from buffer
+        let bar = create_footprint_bar(&state.tick_buffer, state.tick_size);
+        
+        // Save to SQLite
+        if let Err(e) = save_footprint_bar(exchange, symbol, bar["time"].as_u64().unwrap_or(timestamp), &bar) {
+            log::error!("Failed to save footprint bar: {}", e);
+        }
+        
+        // Keep in memory (limit to 200 bars)
+        state.bars.push(bar);
+        if state.bars.len() > 200 {
+            state.bars.remove(0);
+        }
+        
+        // Clear buffer
+        state.tick_buffer.clear();
+        
+        // Log progress
+        if state.trade_count % 10000 == 0 {
+            log::info!("📊 {} server footprint: {} bars, {} trades total", 
+                key, state.bars.len(), state.trade_count);
+        }
+    }
+}
+
+/// Create a footprint bar from trades
+fn create_footprint_bar(trades: &[TradeData], tick_size: f64) -> serde_json::Value {
+    if trades.is_empty() {
+        return serde_json::json!({});
+    }
+    
+    let open = trades[0].price;
+    let close = trades[trades.len() - 1].price;
+    let high = trades.iter().map(|t| t.price).fold(f64::MIN, f64::max);
+    let low = trades.iter().map(|t| t.price).fold(f64::MAX, f64::min);
+    let time = trades[0].timestamp;
+    
+    // Group by price level
+    let mut price_levels: HashMap<i64, (f64, f64)> = HashMap::new(); // (bid, ask)
+    
+    for trade in trades {
+        let level = (trade.price / tick_size).round() as i64;
+        let entry = price_levels.entry(level).or_insert((0.0, 0.0));
+        if trade.is_buyer_maker {
+            entry.0 += trade.quantity; // bid (sell)
+        } else {
+            entry.1 += trade.quantity; // ask (buy)
+        }
+    }
+    
+    // Find POC (Point of Control)
+    let poc_level = price_levels.iter()
+        .max_by(|a, b| {
+            let vol_a = a.1.0 + a.1.1;
+            let vol_b = b.1.0 + b.1.1;
+            vol_a.partial_cmp(&vol_b).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(level, _)| *level as f64 * tick_size)
+        .unwrap_or(close);
+    
+    // Convert price levels to JSON
+    let levels_json: HashMap<String, serde_json::Value> = price_levels.iter()
+        .map(|(level, (bid, ask))| {
+            let price = *level as f64 * tick_size;
+            (format!("{:.2}", price), serde_json::json!({
+                "bid": bid,
+                "ask": ask,
+                "delta": ask - bid
+            }))
+        })
+        .collect();
+    
+    serde_json::json!({
+        "time": time,
+        "open": open,
+        "high": high,
+        "low": low,
+        "close": close,
+        "priceLevels": levels_json,
+        "pocPrice": poc_level,
+        "isBullish": close >= open,
+        "tradeCount": trades.len()
+    })
+}
+
+/// Get server-side footprint state for a ticker
+pub fn get_footprint_state(exchange: &str, symbol: &str) -> Option<serde_json::Value> {
+    let key = format!("{}:{}", exchange, symbol);
+    let states = FOOTPRINT_STATES.read();
+    
+    states.get(&key).map(|state| {
+        serde_json::json!({
+            "ticker": key,
+            "bars": state.bars,
+            "current_buffer_size": state.tick_buffer.len(),
+            "tick_count": state.tick_count,
+            "tick_size": state.tick_size,
+            "last_price": state.last_price,
+            "high_price": state.high_price,
+            "low_price": state.low_price,
+            "total_trades": state.trade_count,
+        })
+    })
+}
+
+/// Get all server-side footprint states
+pub fn get_all_footprint_states() -> serde_json::Value {
+    let states = FOOTPRINT_STATES.read();
+    
+    let tickers: Vec<serde_json::Value> = states.iter()
+        .map(|(key, state)| {
+            serde_json::json!({
+                "ticker": key,
+                "bars_count": state.bars.len(),
+                "buffer_size": state.tick_buffer.len(),
+                "total_trades": state.trade_count,
+                "last_price": state.last_price,
+            })
+        })
+        .collect();
+    
+    serde_json::json!({
+        "active_tickers": tickers,
+        "count": tickers.len()
+    })
+}

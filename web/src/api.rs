@@ -1633,6 +1633,27 @@ pub async fn get_active_tickers() -> Result<HttpResponse> {
     })))
 }
 
+/// GET /api/v1/server-footprint
+/// Get all server-side footprint states (runs 24/7 independent of browser)
+pub async fn get_all_server_footprints() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(crate::db::get_all_footprint_states()))
+}
+
+/// GET /api/v1/server-footprint/{exchange}/{symbol}
+/// Get server-side footprint data for a specific ticker
+pub async fn get_server_footprint(
+    path: web::Path<(String, String)>,
+) -> Result<HttpResponse> {
+    let (exchange, symbol) = path.into_inner();
+    
+    match crate::db::get_footprint_state(&exchange.to_lowercase(), &symbol.to_uppercase()) {
+        Some(state) => Ok(HttpResponse::Ok().json(state)),
+        None => Ok(HttpResponse::NotFound().json(serde_json::json!({
+            "error": format!("No footprint data for {}:{}", exchange, symbol)
+        }))),
+    }
+}
+
 /// DELETE /api/v1/active-tickers/{exchange}/{symbol}
 /// Remove a ticker from 24/7 collection (admin only - stops the stream)
 pub async fn remove_active_ticker(
